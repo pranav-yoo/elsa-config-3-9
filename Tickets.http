@@ -1,0 +1,146 @@
+@baseUrl = http://localhost:5000
+# Copy the access token from the corresponding login into these variables (without Bearer).
+@configuratorToken = REPLACE
+@requesterToken = REPLACE
+@reviewerToken = REPLACE
+@supervisorToken = REPLACE
+@taskId = REPLACE
+@revision = 1
+
+### 1. Log in as configurator; non-admin sample accounts use Password123!
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{"username":"configurator","password":"Password123!"}
+
+### 2. Create and publish the workflow using ONLY Elsa's native definition API
+# Paste the contents of Samples/Definitions/expense-claim.definition.json as the body.
+POST {{baseUrl}}/elsa/api/workflow-definitions
+Authorization: Bearer {{configuratorToken}}
+Content-Type: application/json
+
+< ./Samples/Definitions/expense-claim.definition.json
+
+### 3. Or create the smallest built-in-only UserTask definition
+POST {{baseUrl}}/elsa/api/workflow-definitions
+Authorization: Bearer {{configuratorToken}}
+Content-Type: application/json
+
+< ./Samples/Definitions/native-ticket-approval.definition.json
+### 5. Log in as the requester
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{"username":"requester","password":"Password123!"}
+
+### 6. Create a ticket using Elsa's existing workflow execution API
+# Change amount to 4000 or 5000 to follow A-B-D; 6000 follows A-B-C-D.
+POST {{baseUrl}}/elsa/api/workflow-definitions/expense-claim-v1/execute
+Authorization: Bearer {{requesterToken}}
+Content-Type: application/json
+
+{
+  "correlationId": "CLAIM-001",
+  "input": {
+    "requesterId": "requester",
+    "firstName": "Pranav",
+    "lastName": "Shah",
+    "claimAmount": 6000
+  }
+}
+
+### 7. Log in as a stage A reviewer
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{"username":"alice","password":"Password123!"}
+
+### 8. Native Elsa available bucket; copy an ID and its revision
+GET {{baseUrl}}/elsa/api/user-tasks?scope=available
+Authorization: Bearer {{reviewerToken}}
+
+### 9. Claim the bucket task
+POST {{baseUrl}}/elsa/api/user-tasks/{{taskId}}/claim
+Authorization: Bearer {{reviewerToken}}
+Content-Type: application/json
+
+{"expectedRevision": {{revision}}, "operationId": "{{$guid}}"}
+
+### 10. Refresh detail to get the current revision and allowedActions
+GET {{baseUrl}}/elsa/api/user-tasks/{{taskId}}
+Authorization: Bearer {{reviewerToken}}
+
+### 11. Approve as the owner (use the revision returned by the latest GET)
+# A 202 means accepted. Requery tasks to observe completion and the next stage.
+POST {{baseUrl}}/elsa/api/user-tasks/{{taskId}}/complete
+Authorization: Bearer {{reviewerToken}}
+Content-Type: application/json
+
+{"expectedRevision": {{revision}}, "operationId": "{{$guid}}", "actionKey":"Approve", "data":{}}
+
+### 12. Or reject, with a reason
+POST {{baseUrl}}/elsa/api/user-tasks/{{taskId}}/complete
+Authorization: Bearer {{reviewerToken}}
+Content-Type: application/json
+
+{"expectedRevision": {{revision}}, "operationId": "{{$guid}}", "actionKey":"Reject", "data":{"reason":"Please correct the submitted amount"}}
+
+### 13. Read assigned work as the current actor
+# Next owners: B = Bella/Bob (claim first), C = Clara if amount > 5000, D = Dan.
+# Replace reviewerToken with that user's token before acting on the new task.
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned
+Authorization: Bearer {{reviewerToken}}
+
+### 14. Resubmit a returned correction task as the requester
+# Use the correction task ID and current revision, not the rejected review task ID.
+POST {{baseUrl}}/elsa/api/user-tasks/{{taskId}}/complete
+Authorization: Bearer {{requesterToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Resubmit",
+  "data": {"attributes":{"firstName":"Pranav","lastName":"Shah","claimAmount":6000}}
+}
+
+### 15. Native task history
+GET {{baseUrl}}/elsa/api/user-tasks/{{taskId}}/events
+Authorization: Bearer {{reviewerToken}}
+
+### 16. Log in as supervisor
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{"username":"supervisor","password":"Password123!"}
+
+### 17. Supervisor view (also includes unassigned work)
+GET {{baseUrl}}/elsa/api/user-tasks?scope=all
+Authorization: Bearer {{supervisorToken}}
+
+### 18. Supervisor assigns blocked/unassigned work using Elsa's native API
+POST {{baseUrl}}/elsa/api/user-tasks/{{taskId}}/assign
+Authorization: Bearer {{supervisorToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{revision}},
+  "operationId": "{{$guid}}",
+  "assignee": {"kind":"user","provider":"default","id":"alice"}
+}
+
+# Every new logical action needs a new operationId. For a retry of the SAME request,
+# resend the SAME operationId, body and expectedRevision rather than generating another ID.
+
+### 19. Instance journey (use admin/supervisor token)
+# Replace the instance ID returned by execute.
+GET {{baseUrl}}/elsa/api/user-tasks?scope=all&workflowInstanceId=REPLACE&includeTotalCount=true
+Authorization: Bearer {{supervisorToken}}
+
+### 20. Finished instance: output.ticketStatus distinguishes Completed from Rejected
+GET {{baseUrl}}/elsa/api/workflow-instances/REPLACE
+Authorization: Bearer {{supervisorToken}}
+
+# Reject routes: A -> requester -> A; B -> A; C -> terminal Rejected; D -> requester -> D.
+# Correction resumes the rejected stage; changing amount at D does not replay B/C.
+

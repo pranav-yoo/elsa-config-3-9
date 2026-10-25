@@ -1,0 +1,41 @@
+{
+  "id": "expense-claim",
+  "version": 1,
+  "definition": {
+    "name": "Expense Claim",
+    "attributes": [
+      { "key": "firstName", "type": "string", "required": true },
+      { "key": "lastName", "type": "string", "required": true },
+      { "key": "claimAmount", "type": "decimal", "required": true }
+    ],
+    "startStage": "A",
+    "stages": [
+      {
+        "key": "A", "name": "A: Initial review (Alice/Amy bucket)",
+        "assignment": { "policy": "bucket", "members": ["alice", "amy"] },
+        "approveTo": "B", "rejectTo": "$requester"
+      },
+      {
+        "key": "B", "name": "B: Claims review (Bella/Bob bucket)",
+        "assignment": { "policy": "bucket", "members": ["bella", "bob"] },
+        "approveTo": "D", "rejectTo": "A",
+        "approveRules": [
+          { "when": { "attribute": "claimAmount", "operator": "greaterThan", "value": 5000 }, "destination": "C" }
+        ]
+      },
+      {
+        "key": "C", "name": "C: High value approval (Clara)",
+        "assignment": {
+          "policy": "condition", "members": ["clara"],
+          "rules": [ { "when": { "attribute": "claimAmount", "operator": "greaterThan", "value": 5000 }, "userId": "clara" } ]
+        },
+        "approveTo": "D", "rejectTo": "$rejected"
+      },
+      {
+        "key": "D", "name": "D: Final approval (Dan)",
+        "assignment": { "policy": "specific", "members": ["dan"], "userId": "dan" },
+        "approveTo": "$completed", "rejectTo": "$requester"
+      }
+    ]
+  }
+}

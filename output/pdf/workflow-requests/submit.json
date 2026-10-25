@@ -1,0 +1,9 @@
+{
+  "correlationId": "CLAIM-001",
+  "input": {
+    "requesterId": "requester",
+    "firstName": "Pranav",
+    "lastName": "Shah",
+    "claimAmount": 6000
+  }
+}

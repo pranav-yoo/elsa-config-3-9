@@ -1,0 +1,485 @@
+{
+  "model": {
+    "inputs": [
+      {
+        "type": "String",
+        "name": "requesterId"
+      },
+      {
+        "type": "String",
+        "name": "ticketReference"
+      },
+      {
+        "type": "String",
+        "name": "firstName"
+      },
+      {
+        "type": "String",
+        "name": "lastName"
+      },
+      {
+        "type": "Decimal",
+        "name": "claimAmount"
+      }
+    ],
+    "variables": [
+      {
+        "id": "attributes",
+        "name": "attributes",
+        "isArray": false,
+        "typeName": "Object",
+        "storageDriverTypeName": "Elsa.Workflows.WorkflowInstanceStorageDriver, Elsa.Workflows.Core"
+      },
+      {
+        "id": "ticketStatus",
+        "name": "ticketStatus",
+        "isArray": false,
+        "typeName": "String",
+        "storageDriverTypeName": "Elsa.Workflows.WorkflowInstanceStorageDriver, Elsa.Workflows.Core"
+      }
+    ],
+    "name": "Expense Claim - Native Elsa Research",
+    "root": {
+      "start": "InitializeAttributes",
+      "type": "Elsa.Flowchart",
+      "connections": [
+        {
+          "source": {
+            "activity": "InitializeAttributes",
+            "port": "Done"
+          },
+          "target": {
+            "activity": "A",
+            "port": "In"
+          }
+        },
+        {
+          "source": {
+            "activity": "A",
+            "port": "Done"
+          },
+          "target": {
+            "activity": "B",
+            "port": "In"
+          }
+        },
+        {
+          "source": {
+            "activity": "B",
+            "port": "Done"
+          },
+          "target": {
+            "activity": "HighValue",
+            "port": "In"
+          }
+        },
+        {
+          "source": {
+            "activity": "HighValue",
+            "port": "True"
+          },
+          "target": {
+            "activity": "C",
+            "port": "In"
+          }
+        },
+        {
+          "source": {
+            "activity": "HighValue",
+            "port": "False"
+          },
+          "target": {
+            "activity": "D",
+            "port": "In"
+          }
+        },
+        {
+          "source": {
+            "activity": "C",
+            "port": "Done"
+          },
+          "target": {
+            "activity": "D",
+            "port": "In"
+          }
+        },
+        {
+          "source": {
+            "activity": "D",
+            "port": "Done"
+          },
+          "target": {
+            "activity": "Completed",
+            "port": "In"
+          }
+        }
+      ],
+      "id": "ticket-flowchart",
+      "version": 1,
+      "activities": [
+        {
+          "value": {
+            "typeName": "Object",
+            "expression": {
+              "value": "(() => { const a={firstName:getInput('firstName'),lastName:getInput('lastName'),claimAmount:getInput('claimAmount')}; if(typeof a.firstName!=='string'||!a.firstName.trim()||typeof a.lastName!=='string'||!a.lastName.trim()||typeof a.claimAmount!=='number'||!Number.isFinite(a.claimAmount)) throw new Error('Invalid ticket attributes'); return a; })()",
+              "type": "JavaScript"
+            }
+          },
+          "type": "Elsa.SetVariable",
+          "name": "InitializeAttributes",
+          "id": "InitializeAttributes",
+          "version": 1,
+          "variable": {
+            "id": "attributes",
+            "name": "attributes"
+          }
+        },
+        {
+          "summary": {
+            "typeName": "String",
+            "expression": {
+              "value": "Native UserTask: complete with actionKey Complete and omit data. This research sample has no form provider.",
+              "type": "Literal"
+            }
+          },
+          "name": "A",
+          "taskType": {
+            "typeName": "String",
+            "expression": {
+              "value": "ticket",
+              "type": "Literal"
+            }
+          },
+          "membershipResolutionMode": {
+            "typeName": "Object",
+            "expression": {
+              "value": "Snapshot",
+              "type": "Literal"
+            }
+          },
+          "reference": {
+            "typeName": "String",
+            "expression": {
+              "value": "getInput('ticketReference')",
+              "type": "JavaScript"
+            }
+          },
+          "candidateUsers": {
+            "typeName": "Object",
+            "expression": {
+              "value": [
+                {
+                  "type": "User",
+                  "id": "alice",
+                  "provider": "default",
+                  "tenantId": ""
+                },
+                {
+                  "type": "User",
+                  "id": "amy",
+                  "provider": "default",
+                  "tenantId": ""
+                }
+              ],
+              "type": "Literal"
+            }
+          },
+          "requester": {
+            "typeName": "Object",
+            "expression": {
+              "value": "({tenantId:'',provider:'default',type:'User',id:getInput('requesterId')})",
+              "type": "JavaScript"
+            }
+          },
+          "type": "Elsa.UserTask",
+          "version": 1,
+          "title": {
+            "typeName": "String",
+            "expression": {
+              "value": "A: Initial review (bucket)",
+              "type": "Literal"
+            }
+          },
+          "id": "A",
+          "taskData": {
+            "typeName": "Object",
+            "expression": {
+              "value": "getVariable('attributes')",
+              "type": "JavaScript"
+            }
+          }
+        },
+        {
+          "summary": {
+            "typeName": "String",
+            "expression": {
+              "value": "Native UserTask: complete with actionKey Complete and omit data. This research sample has no form provider.",
+              "type": "Literal"
+            }
+          },
+          "name": "B",
+          "taskType": {
+            "typeName": "String",
+            "expression": {
+              "value": "ticket",
+              "type": "Literal"
+            }
+          },
+          "membershipResolutionMode": {
+            "typeName": "Object",
+            "expression": {
+              "value": "Snapshot",
+              "type": "Literal"
+            }
+          },
+          "reference": {
+            "typeName": "String",
+            "expression": {
+              "value": "getInput('ticketReference')",
+              "type": "JavaScript"
+            }
+          },
+          "candidateUsers": {
+            "typeName": "Object",
+            "expression": {
+              "value": [
+                {
+                  "type": "User",
+                  "id": "bella",
+                  "provider": "default",
+                  "tenantId": ""
+                },
+                {
+                  "type": "User",
+                  "id": "bob",
+                  "provider": "default",
+                  "tenantId": ""
+                }
+              ],
+              "type": "Literal"
+            }
+          },
+          "requester": {
+            "typeName": "Object",
+            "expression": {
+              "value": "({tenantId:'',provider:'default',type:'User',id:getInput('requesterId')})",
+              "type": "JavaScript"
+            }
+          },
+          "type": "Elsa.UserTask",
+          "version": 1,
+          "title": {
+            "typeName": "String",
+            "expression": {
+              "value": "B: Claims review (Bella/Bob bucket)",
+              "type": "Literal"
+            }
+          },
+          "id": "B",
+          "taskData": {
+            "typeName": "Object",
+            "expression": {
+              "value": "getVariable('attributes')",
+              "type": "JavaScript"
+            }
+          }
+        },
+        {
+          "summary": {
+            "typeName": "String",
+            "expression": {
+              "value": "Native UserTask: complete with actionKey Complete and omit data. This research sample has no form provider.",
+              "type": "Literal"
+            }
+          },
+          "title": {
+            "typeName": "String",
+            "expression": {
+              "value": "C: High value approval (Clara)",
+              "type": "Literal"
+            }
+          },
+          "membershipResolutionMode": {
+            "typeName": "Object",
+            "expression": {
+              "value": "Snapshot",
+              "type": "Literal"
+            }
+          },
+          "reference": {
+            "typeName": "String",
+            "expression": {
+              "value": "getInput('ticketReference')",
+              "type": "JavaScript"
+            }
+          },
+          "candidateUsers": {
+            "typeName": "Object",
+            "expression": {
+              "value": [
+                {
+                  "type": "User",
+                  "id": "clara",
+                  "provider": "default",
+                  "tenantId": ""
+                }
+              ],
+              "type": "Literal"
+            }
+          },
+          "version": 1,
+          "taskData": {
+            "typeName": "Object",
+            "expression": {
+              "value": "getVariable('attributes')",
+              "type": "JavaScript"
+            }
+          },
+          "requester": {
+            "typeName": "Object",
+            "expression": {
+              "value": "({tenantId:'',provider:'default',type:'User',id:getInput('requesterId')})",
+              "type": "JavaScript"
+            }
+          },
+          "name": "C",
+          "taskType": {
+            "typeName": "String",
+            "expression": {
+              "value": "ticket",
+              "type": "Literal"
+            }
+          },
+          "type": "Elsa.UserTask",
+          "assignee": {
+            "typeName": "Object",
+            "expression": {
+              "value": {
+                "type": "User",
+                "id": "clara",
+                "provider": "default",
+                "tenantId": ""
+              },
+              "type": "Literal"
+            }
+          },
+          "id": "C"
+        },
+        {
+          "summary": {
+            "typeName": "String",
+            "expression": {
+              "value": "Native UserTask: complete with actionKey Complete and omit data. This research sample has no form provider.",
+              "type": "Literal"
+            }
+          },
+          "title": {
+            "typeName": "String",
+            "expression": {
+              "value": "D: Final approval (Dan)",
+              "type": "Literal"
+            }
+          },
+          "membershipResolutionMode": {
+            "typeName": "Object",
+            "expression": {
+              "value": "Snapshot",
+              "type": "Literal"
+            }
+          },
+          "reference": {
+            "typeName": "String",
+            "expression": {
+              "value": "getInput('ticketReference')",
+              "type": "JavaScript"
+            }
+          },
+          "candidateUsers": {
+            "typeName": "Object",
+            "expression": {
+              "value": [
+                {
+                  "type": "User",
+                  "id": "dan",
+                  "provider": "default",
+                  "tenantId": ""
+                }
+              ],
+              "type": "Literal"
+            }
+          },
+          "version": 1,
+          "taskData": {
+            "typeName": "Object",
+            "expression": {
+              "value": "getVariable('attributes')",
+              "type": "JavaScript"
+            }
+          },
+          "requester": {
+            "typeName": "Object",
+            "expression": {
+              "value": "({tenantId:'',provider:'default',type:'User',id:getInput('requesterId')})",
+              "type": "JavaScript"
+            }
+          },
+          "name": "D",
+          "taskType": {
+            "typeName": "String",
+            "expression": {
+              "value": "ticket",
+              "type": "Literal"
+            }
+          },
+          "type": "Elsa.UserTask",
+          "assignee": {
+            "typeName": "Object",
+            "expression": {
+              "value": {
+                "type": "User",
+                "id": "dan",
+                "provider": "default",
+                "tenantId": ""
+              },
+              "type": "Literal"
+            }
+          },
+          "id": "D"
+        },
+        {
+          "type": "Elsa.FlowDecision",
+          "id": "HighValue",
+          "name": "HighValue",
+          "condition": {
+            "typeName": "Boolean",
+            "expression": {
+              "value": "getVariable('attributes').claimAmount > 5000",
+              "type": "JavaScript"
+            }
+          },
+          "version": 1
+        },
+        {
+          "value": {
+            "typeName": "String",
+            "expression": {
+              "value": "Completed",
+              "type": "Literal"
+            }
+          },
+          "type": "Elsa.SetVariable",
+          "name": "Completed",
+          "id": "Completed",
+          "version": 1,
+          "variable": {
+            "id": "ticketStatus",
+            "name": "ticketStatus"
+          }
+        }
+      ]
+    },
+    "definitionId": "expense-claim-native-v1",
+    "description": "Built-in activities only. A and B are claimable buckets; C is conditional above 5000; D is final. Complete-only tasks, no form provider or custom ticket code."
+  },
+  "publish": true
+}

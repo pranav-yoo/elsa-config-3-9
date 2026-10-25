@@ -1,0 +1,148 @@
+{
+  "Identity": {
+    "Users": [
+      {
+        "id": "admin",
+        "hashedPasswordSalt": "q5Xa8BRdFKVZe5KvHm3Oa48039X4120PM6zC0dsGFcc=",
+        "hashedPassword": "cGJrZGYyLXNoYTI1NiQ2MDAwMDAkdnNFWUJuZWcvWjkzVlpWRGZYVVRmNlNjWHVoMThiV0doMVRNY3pwNjZTQT0=",
+        "name": "admin",
+        "roles": [
+          "admin"
+        ]
+      },
+      {
+        "id": "configurator",
+        "hashedPasswordSalt": "sQ9wVMww6fUz8GmRUAlCg+4jexqg/ngDh9PEJxSX4og=",
+        "hashedPassword": "cGJrZGYyLXNoYTI1NiQ2MDAwMDAkL2xHc0U0L3h0Y00yZ212NUYxU1ZiYTEvS3VwWHJBSEhBOGdkNGY1dnRNND0=",
+        "name": "configurator",
+        "roles": [
+          "Configurator"
+        ]
+      },
+      {
+        "id": "requester",
+        "hashedPasswordSalt": "sQ9wVMww6fUz8GmRUAlCg+4jexqg/ngDh9PEJxSX4og=",
+        "hashedPassword": "cGJrZGYyLXNoYTI1NiQ2MDAwMDAkL2xHc0U0L3h0Y00yZ212NUYxU1ZiYTEvS3VwWHJBSEhBOGdkNGY1dnRNND0=",
+        "name": "requester",
+        "roles": [
+          "Requester"
+        ]
+      },
+      {
+        "id": "alice",
+        "hashedPasswordSalt": "sQ9wVMww6fUz8GmRUAlCg+4jexqg/ngDh9PEJxSX4og=",
+        "hashedPassword": "cGJrZGYyLXNoYTI1NiQ2MDAwMDAkL2xHc0U0L3h0Y00yZ212NUYxU1ZiYTEvS3VwWHJBSEhBOGdkNGY1dnRNND0=",
+        "name": "alice",
+        "roles": [
+          "Approver"
+        ]
+      },
+      {
+        "id": "amy",
+        "hashedPasswordSalt": "sQ9wVMww6fUz8GmRUAlCg+4jexqg/ngDh9PEJxSX4og=",
+        "hashedPassword": "cGJrZGYyLXNoYTI1NiQ2MDAwMDAkL2xHc0U0L3h0Y00yZ212NUYxU1ZiYTEvS3VwWHJBSEhBOGdkNGY1dnRNND0=",
+        "name": "amy",
+        "roles": [
+          "Approver"
+        ]
+      },
+      {
+        "id": "bob",
+        "hashedPasswordSalt": "sQ9wVMww6fUz8GmRUAlCg+4jexqg/ngDh9PEJxSX4og=",
+        "hashedPassword": "cGJrZGYyLXNoYTI1NiQ2MDAwMDAkL2xHc0U0L3h0Y00yZ212NUYxU1ZiYTEvS3VwWHJBSEhBOGdkNGY1dnRNND0=",
+        "name": "bob",
+        "roles": [
+          "Approver"
+        ]
+      },
+      {
+        "id": "bella",
+        "hashedPasswordSalt": "sQ9wVMww6fUz8GmRUAlCg+4jexqg/ngDh9PEJxSX4og=",
+        "hashedPassword": "cGJrZGYyLXNoYTI1NiQ2MDAwMDAkL2xHc0U0L3h0Y00yZ212NUYxU1ZiYTEvS3VwWHJBSEhBOGdkNGY1dnRNND0=",
+        "name": "bella",
+        "roles": [
+          "Approver"
+        ]
+      },
+      {
+        "id": "clara",
+        "hashedPasswordSalt": "sQ9wVMww6fUz8GmRUAlCg+4jexqg/ngDh9PEJxSX4og=",
+        "hashedPassword": "cGJrZGYyLXNoYTI1NiQ2MDAwMDAkL2xHc0U0L3h0Y00yZ212NUYxU1ZiYTEvS3VwWHJBSEhBOGdkNGY1dnRNND0=",
+        "name": "clara",
+        "roles": [
+          "Approver"
+        ]
+      },
+      {
+        "id": "dan",
+        "hashedPasswordSalt": "sQ9wVMww6fUz8GmRUAlCg+4jexqg/ngDh9PEJxSX4og=",
+        "hashedPassword": "cGJrZGYyLXNoYTI1NiQ2MDAwMDAkL2xHc0U0L3h0Y00yZ212NUYxU1ZiYTEvS3VwWHJBSEhBOGdkNGY1dnRNND0=",
+        "name": "dan",
+        "roles": [
+          "Approver"
+        ]
+      },
+      {
+        "id": "supervisor",
+        "hashedPasswordSalt": "sQ9wVMww6fUz8GmRUAlCg+4jexqg/ngDh9PEJxSX4og=",
+        "hashedPassword": "cGJrZGYyLXNoYTI1NiQ2MDAwMDAkL2xHc0U0L3h0Y00yZ212NUYxU1ZiYTEvS3VwWHJBSEhBOGdkNGY1dnRNND0=",
+        "name": "supervisor",
+        "roles": [
+          "Supervisor"
+        ]
+      }
+    ],
+    "Roles": [
+      {
+        "id": "Supervisor",
+        "permissions": [
+          "user-tasks:view",
+          "user-tasks:assign",
+          "user-tasks:supervise"
+        ],
+        "name": "Supervisor"
+      },
+      {
+        "id": "Requester",
+        "permissions": [
+          "user-tasks:view",
+          "user-tasks:complete",
+          "workflows/definitions:view",
+          "workflows/definitions:execute"
+        ],
+        "name": "Requester"
+      },
+      {
+        "id": "admin",
+        "permissions": [
+          "*"
+        ],
+        "name": "admin"
+      },
+      {
+        "id": "Administrator",
+        "permissions": [
+          "*"
+        ],
+        "name": "Administrator"
+      },
+      {
+        "id": "Approver",
+        "permissions": [
+          "user-tasks:view",
+          "user-tasks:claim",
+          "user-tasks:complete"
+        ],
+        "name": "Approver"
+      },
+      {
+        "id": "Configurator",
+        "permissions": [
+          "workflows/definitions:*",
+          "workflows/instances:view"
+        ],
+        "name": "Configurator"
+      }
+    ]
+  }
+}

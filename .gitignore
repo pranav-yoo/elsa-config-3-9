@@ -1,0 +1,14 @@
+bin/
+obj/
+.vs/
+.dotnet/
+.sdk.zip
+*.user
+*.log
+App_Data/
+tmp/
+__pycache__/
+*.pyc
+appsettings.Local.json
+appsettings.*.local.json
+secrets.json

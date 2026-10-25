@@ -1,0 +1,53 @@
+{
+  "publish": true,
+  "model": {
+    "definitionId": "native-ticket-approval",
+    "name": "Native ticket approval",
+    "root": {
+      "candidateUsers": {
+        "expression": {
+          "value": [
+            {
+              "id": "alice",
+              "provider": "default",
+              "type": "User",
+              "tenantId": ""
+            },
+            {
+              "id": "amy",
+              "provider": "default",
+              "type": "User",
+              "tenantId": ""
+            }
+          ],
+          "type": "Literal"
+        },
+        "typeName": "Object"
+      },
+      "version": 1,
+      "id": "review",
+      "title": {
+        "expression": {
+          "value": "Review expense claim",
+          "type": "Literal"
+        },
+        "typeName": "String"
+      },
+      "type": "Elsa.UserTask"
+    },
+    "inputs": [
+      {
+        "name": "firstName",
+        "type": "String"
+      },
+      {
+        "name": "lastName",
+        "type": "String"
+      },
+      {
+        "name": "claimAmount",
+        "type": "Decimal"
+      }
+    ]
+  }
+}
