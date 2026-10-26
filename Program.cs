@@ -17,7 +17,8 @@ using Elsa.UserTasks.Persistence.EFCore.PostgreSql.Extensions;
 using IlWorkflow.Api.Tickets;
 
 var builder = WebApplication.CreateBuilder(args);
-if (builder.Environment.IsDevelopment()) builder.Configuration.AddJsonFile("Samples/identity.json", optional: false, reloadOnChange: true);
+var useConfigurationIdentity = builder.Environment.IsDevelopment() && builder.Configuration.GetValue("Identity:UseConfigurationProviders", true);
+if (useConfigurationIdentity) builder.Configuration.AddJsonFile("Samples/identity.json", optional: false, reloadOnChange: true);
 var configuration = builder.Configuration;
 var swaggerPreview = builder.Environment.IsDevelopment() && configuration.GetValue<bool>("SwaggerPreview");
 var connectionString = configuration.GetConnectionString("Elsa")!;
@@ -34,13 +35,13 @@ builder.Services.AddElsa(elsa =>
     elsa.UseIdentity(identity =>
         {
             identity.TokenOptions += options => configuration.GetSection("Identity:Tokens").Bind(options);
-            if (builder.Environment.IsDevelopment())
+            if (useConfigurationIdentity)
             {
                 identity.UseConfigurationBasedUserProvider(options => configuration.GetSection("Identity").Bind(options));
                 identity.UseConfigurationBasedRoleProvider(options => configuration.GetSection("Identity").Bind(options));
             }
             if (!swaggerPreview) identity.UseEntityFrameworkCore(ef => ef.UsePostgreSql(connectionString));
-            if (!builder.Environment.IsDevelopment()) identity.UseDefaultAdmin(admin => admin
+            if (!useConfigurationIdentity) identity.UseDefaultAdmin(admin => admin
                 .WithAdminUserName(configuration["Identity:Admin:UserName"] ?? "admin")
                 .WithAdminRoleName("admin")
                 .WithAdminPassword(configuration["Identity:Admin:Password"]!));
@@ -68,7 +69,7 @@ builder.Services.AddScoped<IUserTaskNotificationSink, DefaultUserTaskNotificatio
 builder.Services.AddScoped<IUserTaskWorkflowResumer, DefaultUserTaskWorkflowResumer>();
 builder.Services.AddSingleton<IUserTaskFormProvider, TicketFormProvider>();
 // Development accounts come from Elsa's configuration providers, rather than store seeding.
-if (builder.Environment.IsDevelopment())
+if (useConfigurationIdentity)
     builder.Services.Configure<Elsa.Identity.Options.DefaultAdminUserOptions>(options =>
     {
         options.AdminUserName = configuration["Identity:Admin:UserName"] ?? "admin";

@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Elsa.Identity.Contracts;
+using Elsa.Identity.Models;
 
 namespace IlWorkflow.Api.Tickets;
 
@@ -66,7 +68,7 @@ public static class TicketJson
         };
     }
 
-    public static void ValidateConfiguration(TicketConfiguration configuration, IConfiguration identity)
+    public static async Task ValidateConfigurationAsync(TicketConfiguration configuration, IUserProvider users, CancellationToken cancellationToken = default)
     {
         var definition = configuration.Definition;
         Require(configuration.Version > 0 && definition.Stages.Length > 0, "A version and stages are required.");
@@ -82,14 +84,16 @@ public static class TicketJson
             Require(new[] { "equals", "notEquals", "greaterThan", "greaterThanOrEqual", "lessThan", "lessThanOrEqual" }.Contains(condition.Operator), "Unknown condition operator.");
             Require(condition.Operator is "equals" or "notEquals" || field!.Type is "decimal" or "integer" or "date", "Ordered comparisons need a number or date.");
         }
-        var users = identity.GetSection("Identity:Users").GetChildren().ToArray();
         foreach (var stage in definition.Stages)
         {
             Require(Destination(stage.ApproveTo) && Destination(stage.RejectTo), "Unknown stage destination.");
             Require(stage.ApproveTo != "$requester", "Use rejectTo to return for correction.");
             Require(new[] { "bucket", "specific", "condition" }.Contains(stage.Assignment.Policy), "Supported policies: bucket, specific, condition.");
             foreach (var member in stage.Assignment.Members)
-                Require(users.Any(u => u["Id"] == member && (u.GetSection("Roles").Get<string[]>() ?? []).Contains("Approver")), $"Unknown approver {member}.");
+            {
+                var user = await users.FindAsync(new UserFilter { Id = member }, cancellationToken);
+                Require(user is not null && user.Roles.Contains("Approver"), $"Unknown approver {member}.");
+            }
             if (stage.Assignment.Policy == "specific") Require(stage.Assignment.Members.Contains(stage.Assignment.UserId), "Specific assignee must be a candidate.");
             foreach (var rule in stage.Assignment.Rules ?? [])
             {

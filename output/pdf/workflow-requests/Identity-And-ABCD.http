@@ -1,0 +1,701 @@
+# Expense Claim: API-created accounts; execute requests ONE AT A TIME in order.
+# VS Code REST Client extension: named responses supply tokens, IDs and revisions.
+# Do not use Send All: completion is asynchronous and optional branches must not run together.
+# Other clients: copy the values from the named response manually.
+#
+# MAIN SEQUENCE: setup -> publish -> execute 6000 -> Alice A -> Bob B -> Clara C -> Dan D -> Finished.
+# The alternative rejection/update requests at the bottom are NOT part of that happy path.
+# New operationId for a new command. For retry, resend the SAME body/ID/revision;
+# {{$guid}} changes on every send, so save the original request before retrying it.
+@baseUrl = http://localhost:5000
+@adminPassword = password
+@samplePassword = Password123!
+
+
+# REQUIRED API-IDENTITY MODE (leave the default JSON fixture mode unchanged):
+# dotnet run --launch-profile http -- --Identity:UseConfigurationProviders=false
+# In preview this creates an in-memory admin; all API-created accounts disappear on restart.
+# On a fresh server, admin is bootstrapped by Elsa. No anonymous create-admin endpoint exists.
+# Use the configured admin password. Create roles/users once; do not rerun POST setup blindly.
+# Native POST users accepts name/password/roles; it GENERATES id (not the username).
+# All workflow candidate IDs below are taken from the creation responses.
+
+
+### 01. Admin login (bootstrap / diagnostic access)
+# @name adminLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "{{adminPassword}}"
+}
+
+### 02. Create Supervisor role
+# @name createRoleSupervisor
+POST {{baseUrl}}/elsa/api/identity/roles
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "id": "Supervisor",
+  "permissions": [
+    "user-tasks:view",
+    "user-tasks:assign",
+    "user-tasks:supervise"
+  ],
+  "name": "Supervisor"
+}
+
+### 03. Create Requester role
+# @name createRoleRequester
+POST {{baseUrl}}/elsa/api/identity/roles
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "id": "Requester",
+  "permissions": [
+    "user-tasks:view",
+    "user-tasks:complete",
+    "workflows/definitions:view",
+    "workflows/definitions:execute"
+  ],
+  "name": "Requester"
+}
+
+### 04. Create Administrator role
+# @name createRoleAdministrator
+POST {{baseUrl}}/elsa/api/identity/roles
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "id": "Administrator",
+  "permissions": [
+    "*"
+  ],
+  "name": "Administrator"
+}
+
+### 05. Create Approver role
+# @name createRoleApprover
+POST {{baseUrl}}/elsa/api/identity/roles
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "id": "Approver",
+  "permissions": [
+    "user-tasks:view",
+    "user-tasks:claim",
+    "user-tasks:complete"
+  ],
+  "name": "Approver"
+}
+
+### 06. Create Configurator role
+# @name createRoleConfigurator
+POST {{baseUrl}}/elsa/api/identity/roles
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "id": "Configurator",
+  "permissions": [
+    "workflows/definitions:*",
+    "workflows/instances:view"
+  ],
+  "name": "Configurator"
+}
+
+### 07. List stored roles
+# @name listRoles
+GET {{baseUrl}}/elsa/api/identity/roles
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 08. Create configurator; keep response.id
+# @name createConfigurator
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "configurator",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Configurator"
+  ]
+}
+
+### 09. Create requester; keep response.id
+# @name createRequester
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "requester",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Requester"
+  ]
+}
+
+### 10. Create alice; keep response.id
+# @name createAlice
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "alice",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Approver"
+  ]
+}
+
+### 11. Create amy; keep response.id
+# @name createAmy
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "amy",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Approver"
+  ]
+}
+
+### 12. Create bella; keep response.id
+# @name createBella
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "bella",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Approver"
+  ]
+}
+
+### 13. Create bob; keep response.id
+# @name createBob
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "bob",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Approver"
+  ]
+}
+
+### 14. Create clara; keep response.id
+# @name createClara
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "clara",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Approver"
+  ]
+}
+
+### 15. Create dan; keep response.id
+# @name createDan
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "dan",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Approver"
+  ]
+}
+
+### 16. Create supervisor; keep response.id
+# @name createSupervisor
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "supervisor",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Supervisor"
+  ]
+}
+
+### 17. List stored users (IDs are generated)
+# @name listUsers
+GET {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 18. Configurator login
+# @name configuratorLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "configurator",
+  "password": "{{samplePassword}}"
+}
+
+### 19. Publish expense-claim-v1 (configurationJson Literal / String)
+# HTTP 200: check workflowDefinition.isPublished. Existing definition publication may create a newer version.
+# @name publishClaim
+POST {{baseUrl}}/elsa/api/workflow-definitions
+Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "publish": true,
+  "model": {
+    "definitionId": "expense-claim-v1",
+    "name": "Expense Claim",
+    "description": "configurationJson interpreter backed by native Elsa User Tasks",
+    "root": {
+      "id": "expense-claim",
+      "name": "ExpenseClaim",
+      "configurationJson": {
+        "expression": {
+          "value": "{\"id\":\"expense-claim\",\"version\":1,\"definition\":{\"name\":\"Expense Claim\",\"attributes\":[{\"key\":\"firstName\",\"type\":\"string\",\"required\":true},{\"key\":\"lastName\",\"type\":\"string\",\"required\":true},{\"key\":\"claimAmount\",\"type\":\"decimal\",\"required\":true}],\"startStage\":\"A\",\"stages\":[{\"key\":\"A\",\"name\":\"A: Initial review (Alice/Amy bucket)\",\"assignment\":{\"policy\":\"bucket\",\"members\":[\"{{createAlice.response.body.$.id}}\",\"{{createAmy.response.body.$.id}}\"]},\"approveTo\":\"B\",\"rejectTo\":\"$requester\"},{\"key\":\"B\",\"name\":\"B: Claims review (Bella/Bob bucket)\",\"assignment\":{\"policy\":\"bucket\",\"members\":[\"{{createBella.response.body.$.id}}\",\"{{createBob.response.body.$.id}}\"]},\"approveTo\":\"D\",\"rejectTo\":\"A\",\"approveRules\":[{\"when\":{\"attribute\":\"claimAmount\",\"operator\":\"greaterThan\",\"value\":5000},\"destination\":\"C\"}]},{\"key\":\"C\",\"name\":\"C: High value approval (Clara)\",\"assignment\":{\"policy\":\"condition\",\"members\":[\"{{createClara.response.body.$.id}}\"],\"rules\":[{\"when\":{\"attribute\":\"claimAmount\",\"operator\":\"greaterThan\",\"value\":5000},\"userId\":\"{{createClara.response.body.$.id}}\"}]},\"approveTo\":\"D\",\"rejectTo\":\"$rejected\"},{\"key\":\"D\",\"name\":\"D: Final approval (Dan)\",\"assignment\":{\"policy\":\"specific\",\"members\":[\"{{createDan.response.body.$.id}}\"],\"userId\":\"{{createDan.response.body.$.id}}\"},\"approveTo\":\"$completed\",\"rejectTo\":\"$requester\"}]}}",
+          "type": "Literal"
+        },
+        "typeName": "String"
+      },
+      "type": "Tickets.TicketFlow",
+      "version": 1
+    },
+    "inputs": [
+      {
+        "name": "requesterId",
+        "type": "String"
+      },
+      {
+        "name": "firstName",
+        "type": "String"
+      },
+      {
+        "name": "lastName",
+        "type": "String"
+      },
+      {
+        "name": "claimAmount",
+        "type": "Decimal"
+      }
+    ]
+  }
+}
+
+### 20. Requester login
+# @name requesterLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "requester",
+  "password": "{{samplePassword}}"
+}
+
+### 21. Submit 6000; save workflowState.id
+# Check subStatus=Suspended and no incident. For 4000/5000, skip ALL C requests and go straight from B to D.
+# @name startClaim
+POST {{baseUrl}}/elsa/api/workflow-definitions/expense-claim-v1/execute
+Authorization: Bearer {{requesterLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "correlationId": "CLAIM-{{$guid}}",
+  "input": {
+    "requesterId": "{{createRequester.response.body.$.id}}",
+    "firstName": "Pranav",
+    "lastName": "Shah",
+    "claimAmount": 6000
+  }
+}
+
+### 22. Requester effective permissions
+# @name requesterPermissions
+GET {{baseUrl}}/elsa/api/identity/me/permissions
+Authorization: Bearer {{requesterLogin.response.body.$.accessToken}}
+
+
+### 23. Stage A: login as alice
+# @name aliceLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "alice",
+  "password": "{{samplePassword}}"
+}
+
+### 24. Stage A: find available task; wait/retry until items is nonempty
+# Use this new task ID, never the previous stage task ID. If empty after a 202, repeat this GET before continuing.
+# @name aTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=available&workflowInstanceId={{startClaim.response.body.$.workflowState.id}}&includeTotalCount=true
+Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
+
+
+### 25. Stage A: alice claims bucket ownership
+# expectedRevision must be a JSON number after substitution; the collection writes numeric references without quotes.
+# @name aClaim
+POST {{baseUrl}}/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}/claim
+Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{aTasks.response.body.$.items[0].revision}},
+  "operationId": "{{$guid}}"
+}
+
+### 26. Stage A: read latest detail/revision
+# @name aDetail
+GET {{baseUrl}}/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}
+Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
+
+
+### 27. Stage A: Approve (or choose its Reject alternative below INSTEAD)
+# Expect 202 accepted/Completing, then allow Elsa to resume. D approval ends this claim.
+# @name aApprove
+POST {{baseUrl}}/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{aDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Approve",
+  "data": {
+    "comment": "A reviewed and approved"
+  }
+}
+
+### 28. Stage B: login as bob
+# @name bobLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "bob",
+  "password": "{{samplePassword}}"
+}
+
+### 29. Stage B: find available task; wait/retry until items is nonempty
+# Use this new task ID, never the previous stage task ID. If empty after a 202, repeat this GET before continuing.
+# @name bTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=available&workflowInstanceId={{startClaim.response.body.$.workflowState.id}}&includeTotalCount=true
+Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
+
+
+### 30. Stage B: bob claims bucket ownership
+# expectedRevision must be a JSON number after substitution; the collection writes numeric references without quotes.
+# @name bClaim
+POST {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}/claim
+Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{bTasks.response.body.$.items[0].revision}},
+  "operationId": "{{$guid}}"
+}
+
+### 31. Stage B: read latest detail/revision
+# @name bDetail
+GET {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}
+Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
+
+
+### 32. Stage B: Approve (or choose its Reject alternative below INSTEAD)
+# Expect 202 accepted/Completing, then allow Elsa to resume. D approval ends this claim.
+# @name bApprove
+POST {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{bDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Approve",
+  "data": {
+    "comment": "B reviewed and approved"
+  }
+}
+
+### 33. Stage C: login as clara
+# @name claraLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "clara",
+  "password": "{{samplePassword}}"
+}
+
+### 34. Stage C: find assigned task; wait/retry until items is nonempty
+# Use this new task ID, never the previous stage task ID. If empty after a 202, repeat this GET before continuing. For C, amount must be > 5000.
+# @name cTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&workflowInstanceId={{startClaim.response.body.$.workflowState.id}}&includeTotalCount=true
+Authorization: Bearer {{claraLogin.response.body.$.accessToken}}
+
+
+### 35. Stage C: read latest detail/revision
+# @name cDetail
+GET {{baseUrl}}/elsa/api/user-tasks/{{cTasks.response.body.$.items[0].id}}
+Authorization: Bearer {{claraLogin.response.body.$.accessToken}}
+
+
+### 36. Stage C: Approve (or choose its Reject alternative below INSTEAD)
+# Expect 202 accepted/Completing, then allow Elsa to resume. D approval ends this claim.
+# @name cApprove
+POST {{baseUrl}}/elsa/api/user-tasks/{{cTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{claraLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{cDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Approve",
+  "data": {
+    "comment": "C reviewed and approved"
+  }
+}
+
+### 37. Stage D: login as dan
+# @name danLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "dan",
+  "password": "{{samplePassword}}"
+}
+
+### 38. Stage D: find assigned task; wait/retry until items is nonempty
+# Use this new task ID, never the previous stage task ID. If empty after a 202, repeat this GET before continuing.
+# @name dTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&workflowInstanceId={{startClaim.response.body.$.workflowState.id}}&includeTotalCount=true
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
+
+
+### 39. Stage D: read latest detail/revision
+# @name dDetail
+GET {{baseUrl}}/elsa/api/user-tasks/{{dTasks.response.body.$.items[0].id}}
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
+
+
+### 40. Stage D: Approve (or choose its Reject alternative below INSTEAD)
+# Expect 202 accepted/Completing, then allow Elsa to resume. D approval ends this claim.
+# @name dApprove
+POST {{baseUrl}}/elsa/api/user-tasks/{{dTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{dDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Approve",
+  "data": {
+    "comment": "D reviewed and approved"
+  }
+}
+
+### 41. Final instance: Finished and output.ticketStatus=Completed
+# Poll until Finished; approved business outcome is workflowState.output.ticketStatus=Completed.
+# @name finishedInstance
+GET {{baseUrl}}/elsa/api/workflow-instances/{{startClaim.response.body.$.workflowState.id}}
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 42. All four stage tasks for this claim
+# Completed A/B/C/D in one list is expected. Each is a distinct task in the same workflow instance.
+# @name allStageTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=all&workflowInstanceId={{startClaim.response.body.$.workflowState.id}}&includeTotalCount=true
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 43. A task event history
+# @name aEvents
+GET {{baseUrl}}/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}/events
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 44. B task event history
+# @name bEvents
+GET {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}/events
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 45. C task event history
+# @name cEvents
+GET {{baseUrl}}/elsa/api/user-tasks/{{cTasks.response.body.$.items[0].id}}/events
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 46. D task event history
+# @name dEvents
+GET {{baseUrl}}/elsa/api/user-tasks/{{dTasks.response.body.$.items[0].id}}/events
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 47. Workflow journal
+# @name claimJournal
+GET {{baseUrl}}/elsa/api/workflow-instances/{{startClaim.response.body.$.workflowState.id}}/journal
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+# END MAIN SEQUENCE
+# ---------------------------------------------------------------------------
+# OPTIONAL ALTERNATIVES: use a NEW claim, stop at the desired active stage,
+# then run its Reject request INSTEAD OF the stage's Approve request.
+# Do not run these on the already completed happy-path tasks above.
+# Refresh that stage's Detail request immediately before its Reject request.
+# Re-run startClaim + discovery as necessary; named references track the last response.
+
+
+### 48. ALTERNATIVE Reject A -> requester correction, then A
+# @name aReject
+POST {{baseUrl}}/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{aDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Reject",
+  "data": {
+    "reason": "A: please correct/review the claim"
+  }
+}
+
+### 49. ALTERNATIVE Reject B -> new A visit
+# @name bReject
+POST {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{bDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Reject",
+  "data": {
+    "reason": "B: please correct/review the claim"
+  }
+}
+
+### 50. ALTERNATIVE Reject C -> terminal Rejected
+# @name cReject
+POST {{baseUrl}}/elsa/api/user-tasks/{{cTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{claraLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{cDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Reject",
+  "data": {
+    "reason": "C: please correct/review the claim"
+  }
+}
+
+### 51. ALTERNATIVE Reject D -> requester correction, then D
+# @name dReject
+POST {{baseUrl}}/elsa/api/user-tasks/{{dTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{dDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Reject",
+  "data": {
+    "reason": "D: please correct/review the claim"
+  }
+}
+
+### 52. After A/D rejection: requester finds correction task
+# Find title Correct and resubmit Expense Claim. Use its ID, not the rejected stage ID.
+# @name correctionTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&workflowInstanceId={{startClaim.response.body.$.workflowState.id}}
+Authorization: Bearer {{requesterLogin.response.body.$.accessToken}}
+
+
+### 53. Read correction detail
+# @name correctionDetail
+GET {{baseUrl}}/elsa/api/user-tasks/{{correctionTasks.response.body.$.items[0].id}}
+Authorization: Bearer {{requesterLogin.response.body.$.accessToken}}
+
+
+### 54. Resubmit corrected attributes as requester
+# Same instance resumes the rejected stage. Re-run that stage discovery/detail and approval. Correction at D does NOT replay B/C.
+# @name resubmitCorrection
+POST {{baseUrl}}/elsa/api/user-tasks/{{correctionTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{requesterLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{correctionDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Resubmit",
+  "data": {
+    "attributes": {
+      "firstName": "Pranav",
+      "lastName": "Shah",
+      "claimAmount": 4000
+    }
+  }
+}
+
+### 55. After rejection/resubmission: current business outcome
+# C rejection: Finished + Rejected. A/D correction: stays active until the resumed stage(s) are approved.
+# @name branchInstance
+GET {{baseUrl}}/elsa/api/workflow-instances/{{startClaim.response.body.$.workflowState.id}}
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 56. OPTIONAL replace Approver role permissions
+# Preserve all intended permissions. Re-login affected users after identity changes.
+# @name updateApproverRole
+PUT {{baseUrl}}/elsa/api/identity/roles/Approver
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Approver",
+  "permissions": [
+    "user-tasks:view",
+    "user-tasks:claim",
+    "user-tasks:complete"
+  ]
+}
+
+### 57. OPTIONAL update Amy roles/password
+# Path parameter is generated user ID. Supply the full intended role list; login again after changing it.
+# @name updateAmy
+PUT {{baseUrl}}/elsa/api/identity/users/{{createAmy.response.body.$.id}}
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Approver"
+  ]
+}

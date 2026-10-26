@@ -33,6 +33,7 @@ This is the final **restored and tested application**, not the abandoned native-
 - One custom **TicketFormProvider** validates Approve, Reject and Resubmit data. This provider is necessary for the tested payloads.
 - Attributes and stage/member/routing configuration are JSON. Do not build a second task engine or add custom ticket/task tables merely to reproduce this research sample.
 - Development users/roles are native Elsa configuration providers backed by JSON. Actual workflow/task state is managed by Elsa, not by these JSON files.
+- Optional API-managed identity mode: start with `--Identity:UseConfigurationProviders=false`. Native store providers authenticate users created through Elsa's APIs; the default JSON mode remains available. See Identity-And-ABCD.http for role/user creation followed by the full workflow.
 - All approval/rejection/correction checks in this handoff passed in **in-memory preview mode**. PostgreSQL restart persistence of this final version is **not verified**.
 
 **Do not tell the receiving application that configurationJson is a built-in Elsa interpreter. It is our custom input and activity.** Merely posting this JSON to a plain Elsa server without registering the activity/form provider will not reproduce the behavior.
@@ -85,6 +86,7 @@ Important details:
 | Samples/expense-claim.configuration.json | Readable business configuration |
 | Samples/Definitions/expense-claim.definition.json | Complete POST body with escaped literal configurationJson |
 | Tickets.http | Reusable native API requests |
+| Identity-And-ABCD.http | Native role/user creation, then ordered A-B-C-D with generated IDs |
 | Tests/ConfigurationApi.ps1 | Verified approval/rejection/correction/access test suite |
 | docs/api-captures.json | 148 captured HTTP exchanges, authentication secrets redacted |
 
@@ -116,7 +118,7 @@ These are research credentials only. Sample passwords are represented by hashes 
 
 Supported attribute types: string, decimal, integer, boolean, date (`yyyy-MM-dd`) and choice (`choices` array). Assignment policies: bucket, specific, condition. Conditions: equals, notEquals, greaterThan, greaterThanOrEqual, lessThan, lessThanOrEqual. First matching rule wins; default approveTo applies when no approval rule matches.
 
-`members` contains user IDs, not actual directory groups. The sample validates candidates against JSON-configured users with the Approver role. External group membership and disabled-account enforcement need integration in the receiving application; they are not provided by this small interpreter.
+`members` contains user IDs, not actual directory groups. The sample validates candidates through native IUserProvider with the Approver role. The selected provider can be configuration-backed (default) or store-backed (API-managed accounts). External group membership and disabled-account enforcement still need receiving-app integration.
 ''')
 file_block('Samples/expense-claim.configuration.json','json')
 text('''## 6. Exact definition publication JSON
@@ -324,7 +326,7 @@ text('''This is an integration excerpt, not a standalone production Program.cs. 
 
 The current TicketFlow checks the HTTP caller subject (`ClaimTypes.NameIdentifier` or `sub`) and the original requester. It assumes synchronous execute with an HttpContext. **Do not replace execute with background dispatch without redesigning this ownership check.**
 
-The sample's member validation reads `Identity:Users` from IConfiguration. Replace those research-only lookups with the receiving application's real user/role directory while preserving candidate and requester validation. Keep the same IDs in JWT identities and ParticipantReference IDs. The sample uses provider `default`, user type, and empty tenant; tenant-aware apps must adapt that consistently.
+Member/requester validation uses native IUserProvider.FindAsync(UserFilter) and roles. Configure the receiving application's identity integration consistently; preserve candidate and requester validation. Keep the same IDs in JWT identities and ParticipantReference IDs. The sample uses provider `default`, user type, and empty tenant; tenant-aware apps must adapt that consistently. Native POST /identity/users accepts name/password/roles and generates the user ID; it does not accept a fixed id field. Use the returned ID when building configurationJson and requesterId.
 
 ## 9. PostgreSQL: configuration versus evidence
 
@@ -434,11 +436,24 @@ text('''## Companion files
 - workflow-requests/expense-claim.definition.json: complete native publication request.
 - workflow-requests/expense-claim.configuration.json: readable configuration source.
 - workflow-requests/submit.json and login-*.json: development curl body fixtures.
+- workflow-requests/Tickets.http: ordered default-fixture workflow.
+- workflow-requests/Identity-And-ABCD.http: native role/user creation and full A-B-C-D workflow; run in store-backed identity mode.
 - api-captures.json: all 148 original exchanges, authentication secrets redacted.
 - Elsa-3.9-Ticket-Workflow-API-Guide.pdf: API-only walkthrough.
 
 All essential source/configuration/request bodies are embedded in this Markdown, so it can be handed to another Codex on its own. Companion files make the curl examples easier to run. No real production secrets are included.
 ''')
+text('''## Appendix H. Role/user API setup and full A-B-C-D HTTP sequence
+
+This is a second, optional identity mode. Start a fresh research instance with:
+
+```powershell
+dotnet run --launch-profile http -- --Identity:UseConfigurationProviders=false
+```
+
+The native administrator is bootstrapped at startup. Then run the requests below one at a time in VS Code REST Client. Named responses substitute generated user IDs, tokens, task IDs and current revisions. Do not run Reject alternatives after the completed approval path. Store-backed preview data is still ephemeral. The five role creations, nine user creations, generated-ID workflow and all four approvals were verified through 47 actual HTTP requests.
+''')
+file_block('Identity-And-ABCD.http','http')
 path=out/'ELSA-WORKFLOW-CODEX-HANDOFF.md'
 path.write_text('\n\n'.join(parts)+'\n',encoding='utf-8')
 for source,name in [('Samples/Definitions/expense-claim.definition.json','expense-claim.definition.json'),('Samples/expense-claim.configuration.json','expense-claim.configuration.json')]:

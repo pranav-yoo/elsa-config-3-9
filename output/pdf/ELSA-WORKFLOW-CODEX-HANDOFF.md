@@ -13,6 +13,7 @@ This is the final **restored and tested application**, not the abandoned native-
 - One custom **TicketFormProvider** validates Approve, Reject and Resubmit data. This provider is necessary for the tested payloads.
 - Attributes and stage/member/routing configuration are JSON. Do not build a second task engine or add custom ticket/task tables merely to reproduce this research sample.
 - Development users/roles are native Elsa configuration providers backed by JSON. Actual workflow/task state is managed by Elsa, not by these JSON files.
+- Optional API-managed identity mode: start with `--Identity:UseConfigurationProviders=false`. Native store providers authenticate users created through Elsa's APIs; the default JSON mode remains available. See Identity-And-ABCD.http for role/user creation followed by the full workflow.
 - All approval/rejection/correction checks in this handoff passed in **in-memory preview mode**. PostgreSQL restart persistence of this final version is **not verified**.
 
 **Do not tell the receiving application that configurationJson is a built-in Elsa interpreter. It is our custom input and activity.** Merely posting this JSON to a plain Elsa server without registering the activity/form provider will not reproduce the behavior.
@@ -65,6 +66,7 @@ Important details:
 | Samples/expense-claim.configuration.json | Readable business configuration |
 | Samples/Definitions/expense-claim.definition.json | Complete POST body with escaped literal configurationJson |
 | Tickets.http | Reusable native API requests |
+| Identity-And-ABCD.http | Native role/user creation, then ordered A-B-C-D with generated IDs |
 | Tests/ConfigurationApi.ps1 | Verified approval/rejection/correction/access test suite |
 | docs/api-captures.json | 148 captured HTTP exchanges, authentication secrets redacted |
 
@@ -101,7 +103,7 @@ These are research credentials only. Sample passwords are represented by hashes 
 
 Supported attribute types: string, decimal, integer, boolean, date (`yyyy-MM-dd`) and choice (`choices` array). Assignment policies: bucket, specific, condition. Conditions: equals, notEquals, greaterThan, greaterThanOrEqual, lessThan, lessThanOrEqual. First matching rule wins; default approveTo applies when no approval rule matches.
 
-`members` contains user IDs, not actual directory groups. The sample validates candidates against JSON-configured users with the Approver role. External group membership and disabled-account enforcement need integration in the receiving application; they are not provided by this small interpreter.
+`members` contains user IDs, not actual directory groups. The sample validates candidates through native IUserProvider with the Approver role. The selected provider can be configuration-backed (default) or store-backed (API-managed accounts). External group membership and disabled-account enforcement still need receiving-app integration.
 
 ```json
 {
@@ -649,7 +651,7 @@ This is an integration excerpt, not a standalone production Program.cs. The exac
 
 The current TicketFlow checks the HTTP caller subject (`ClaimTypes.NameIdentifier` or `sub`) and the original requester. It assumes synchronous execute with an HttpContext. **Do not replace execute with background dispatch without redesigning this ownership check.**
 
-The sample's member validation reads `Identity:Users` from IConfiguration. Replace those research-only lookups with the receiving application's real user/role directory while preserving candidate and requester validation. Keep the same IDs in JWT identities and ParticipantReference IDs. The sample uses provider `default`, user type, and empty tenant; tenant-aware apps must adapt that consistently.
+Member/requester validation uses native IUserProvider.FindAsync(UserFilter) and roles. Configure the receiving application's identity integration consistently; preserve candidate and requester validation. Keep the same IDs in JWT identities and ParticipantReference IDs. The sample uses provider `default`, user type, and empty tenant; tenant-aware apps must adapt that consistently. Native POST /identity/users accepts name/password/roles and generates the user ID; it does not accept a fixed id field. Use the returned ID when building configurationJson and requesterId.
 
 ## 9. PostgreSQL: configuration versus evidence
 
@@ -740,6 +742,8 @@ Use `Tests/ConfigurationApi.ps1` as the starting API suite. It creates disposabl
 
 ```csharp
 using System.Text.Json;
+using Elsa.Identity.Contracts;
+using Elsa.Identity.Models;
 
 namespace IlWorkflow.Api.Tickets;
 
@@ -807,7 +811,7 @@ public static class TicketJson
         };
     }
 
-    public static void ValidateConfiguration(TicketConfiguration configuration, IConfiguration identity)
+    public static async Task ValidateConfigurationAsync(TicketConfiguration configuration, IUserProvider users, CancellationToken cancellationToken = default)
     {
         var definition = configuration.Definition;
         Require(configuration.Version > 0 && definition.Stages.Length > 0, "A version and stages are required.");
@@ -823,14 +827,16 @@ public static class TicketJson
             Require(new[] { "equals", "notEquals", "greaterThan", "greaterThanOrEqual", "lessThan", "lessThanOrEqual" }.Contains(condition.Operator), "Unknown condition operator.");
             Require(condition.Operator is "equals" or "notEquals" || field!.Type is "decimal" or "integer" or "date", "Ordered comparisons need a number or date.");
         }
-        var users = identity.GetSection("Identity:Users").GetChildren().ToArray();
         foreach (var stage in definition.Stages)
         {
             Require(Destination(stage.ApproveTo) && Destination(stage.RejectTo), "Unknown stage destination.");
             Require(stage.ApproveTo != "$requester", "Use rejectTo to return for correction.");
             Require(new[] { "bucket", "specific", "condition" }.Contains(stage.Assignment.Policy), "Supported policies: bucket, specific, condition.");
             foreach (var member in stage.Assignment.Members)
-                Require(users.Any(u => u["Id"] == member && (u.GetSection("Roles").Get<string[]>() ?? []).Contains("Approver")), $"Unknown approver {member}.");
+            {
+                var user = await users.FindAsync(new UserFilter { Id = member }, cancellationToken);
+                Require(user is not null && user.Roles.Contains("Approver"), $"Unknown approver {member}.");
+            }
             if (stage.Assignment.Policy == "specific") Require(stage.Assignment.Members.Contains(stage.Assignment.UserId), "Specific assignee must be a candidate.");
             foreach (var rule in stage.Assignment.Rules ?? [])
             {
@@ -864,6 +870,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Elsa.Extensions;
 using Elsa.Expressions.Models;
+using Elsa.Identity.Contracts;
+using Elsa.Identity.Models;
 using UserTask = Elsa.UserTasks.Activities.UserTask;
 using Elsa.UserTasks.Activities;
 using Elsa.UserTasks.Models;
@@ -909,15 +917,16 @@ public sealed class TicketFlow : Activity
     {
         var configuration = ConfigurationJson.Get(context);
         var ticket = TicketJson.Read<TicketConfiguration>(configuration);
-        var settings = context.GetRequiredService<IConfiguration>();
-        TicketJson.ValidateConfiguration(ticket, settings);
+        var users = context.GetRequiredService<IUserProvider>();
+        await TicketJson.ValidateConfigurationAsync(ticket, users, context.CancellationToken);
         var attributes = ticket.Definition.Attributes.ToDictionary(f => f.Key, f => JsonSerializer.SerializeToElement(context.WorkflowExecutionContext.Input.GetValueOrDefault(f.Key)));
         TicketJson.ValidateAttributes(ticket.Definition, attributes);
         var requester = context.GetWorkflowInput<string>("requesterId");
         var actor = context.GetRequiredService<IHttpContextAccessor>().HttpContext?.User;
         var actorId = actor?.FindFirstValue(ClaimTypes.NameIdentifier) ?? actor?.FindFirstValue("sub");
         TicketJson.Require(actor?.Identity?.IsAuthenticated == true && (actorId == requester || actor.IsInRole("admin")), "Submit only for your own user ID using synchronous execute.");
-        TicketJson.Require(settings.GetSection("Identity:Users").GetChildren().Any(u => u["Id"] == requester && (u.GetSection("Roles").Get<string[]>() ?? []).Contains("Requester")), "Unknown requester.");
+        var requesterAccount = await users.FindAsync(new UserFilter { Id = requester }, context.CancellationToken);
+        TicketJson.Require(requesterAccount is not null && requesterAccount.Roles.Contains("Requester"), "Unknown requester.");
         context.SetProperty("configuration", configuration);
         context.SetProperty("attributes", TicketJson.Write(attributes));
         context.SetProperty("requester", requester);
@@ -1070,7 +1079,8 @@ using Elsa.UserTasks.Persistence.EFCore.PostgreSql.Extensions;
 using IlWorkflow.Api.Tickets;
 
 var builder = WebApplication.CreateBuilder(args);
-if (builder.Environment.IsDevelopment()) builder.Configuration.AddJsonFile("Samples/identity.json", optional: false, reloadOnChange: true);
+var useConfigurationIdentity = builder.Environment.IsDevelopment() && builder.Configuration.GetValue("Identity:UseConfigurationProviders", true);
+if (useConfigurationIdentity) builder.Configuration.AddJsonFile("Samples/identity.json", optional: false, reloadOnChange: true);
 var configuration = builder.Configuration;
 var swaggerPreview = builder.Environment.IsDevelopment() && configuration.GetValue<bool>("SwaggerPreview");
 var connectionString = configuration.GetConnectionString("Elsa")!;
@@ -1087,13 +1097,13 @@ builder.Services.AddElsa(elsa =>
     elsa.UseIdentity(identity =>
         {
             identity.TokenOptions += options => configuration.GetSection("Identity:Tokens").Bind(options);
-            if (builder.Environment.IsDevelopment())
+            if (useConfigurationIdentity)
             {
                 identity.UseConfigurationBasedUserProvider(options => configuration.GetSection("Identity").Bind(options));
                 identity.UseConfigurationBasedRoleProvider(options => configuration.GetSection("Identity").Bind(options));
             }
             if (!swaggerPreview) identity.UseEntityFrameworkCore(ef => ef.UsePostgreSql(connectionString));
-            if (!builder.Environment.IsDevelopment()) identity.UseDefaultAdmin(admin => admin
+            if (!useConfigurationIdentity) identity.UseDefaultAdmin(admin => admin
                 .WithAdminUserName(configuration["Identity:Admin:UserName"] ?? "admin")
                 .WithAdminRoleName("admin")
                 .WithAdminPassword(configuration["Identity:Admin:Password"]!));
@@ -1121,7 +1131,7 @@ builder.Services.AddScoped<IUserTaskNotificationSink, DefaultUserTaskNotificatio
 builder.Services.AddScoped<IUserTaskWorkflowResumer, DefaultUserTaskWorkflowResumer>();
 builder.Services.AddSingleton<IUserTaskFormProvider, TicketFormProvider>();
 // Development accounts come from Elsa's configuration providers, rather than store seeding.
-if (builder.Environment.IsDevelopment())
+if (useConfigurationIdentity)
     builder.Services.Configure<Elsa.Identity.Options.DefaultAdminUserOptions>(options =>
     {
         options.AdminUserName = configuration["Identity:Admin:UserName"] ?? "admin";
@@ -1397,49 +1407,120 @@ Only for an isolated research host. These are sample password hashes for the doc
 ## Appendix F. Exact reusable HTTP request collection
 
 ```http
+# Expense Claim: existing JSON sample accounts; execute requests ONE AT A TIME in order.
+# VS Code REST Client extension: named responses supply tokens, IDs and revisions.
+# Do not use Send All: completion is asynchronous and optional branches must not run together.
+# Other clients: copy the values from the named response manually.
+#
+# MAIN SEQUENCE: setup -> publish -> execute 6000 -> Alice A -> Bob B -> Clara C -> Dan D -> Finished.
+# The alternative rejection/update requests at the bottom are NOT part of that happy path.
+# New operationId for a new command. For retry, resend the SAME body/ID/revision;
+# {{$guid}} changes on every send, so save the original request before retrying it.
 @baseUrl = http://localhost:5000
-# Copy the access token from the corresponding login into these variables (without Bearer).
-@configuratorToken = REPLACE
-@requesterToken = REPLACE
-@reviewerToken = REPLACE
-@supervisorToken = REPLACE
-@taskId = REPLACE
-@revision = 1
+@adminPassword = password
+@samplePassword = Password123!
 
-### 1. Log in as configurator; non-admin sample accounts use Password123!
+
+# DEFAULT MODE: Identity:UseConfigurationProviders=true (current default).
+# These users/roles already exist in Samples/identity.json; do not POST-create them again.
+# For ALL role/user creation requests followed by the same A-B-C-D flow,
+# use Identity-And-ABCD.http with its documented store-backed startup switch.
+# Sample user IDs equal names in this mode only.
+
+
+### 01. Admin login (bootstrap / diagnostic access)
+# @name adminLogin
 POST {{baseUrl}}/elsa/api/identity/login
-Content-Type: application/json
-
-{"username":"configurator","password":"Password123!"}
-
-### 2. Create and publish the workflow using ONLY Elsa's native definition API
-# Paste the contents of Samples/Definitions/expense-claim.definition.json as the body.
-POST {{baseUrl}}/elsa/api/workflow-definitions
-Authorization: Bearer {{configuratorToken}}
-Content-Type: application/json
-
-< ./Samples/Definitions/expense-claim.definition.json
-
-### 3. Or create the smallest built-in-only UserTask definition
-POST {{baseUrl}}/elsa/api/workflow-definitions
-Authorization: Bearer {{configuratorToken}}
-Content-Type: application/json
-
-< ./Samples/Definitions/native-ticket-approval.definition.json
-### 5. Log in as the requester
-POST {{baseUrl}}/elsa/api/identity/login
-Content-Type: application/json
-
-{"username":"requester","password":"Password123!"}
-
-### 6. Create a ticket using Elsa's existing workflow execution API
-# Change amount to 4000 or 5000 to follow A-B-D; 6000 follows A-B-C-D.
-POST {{baseUrl}}/elsa/api/workflow-definitions/expense-claim-v1/execute
-Authorization: Bearer {{requesterToken}}
 Content-Type: application/json
 
 {
-  "correlationId": "CLAIM-001",
+  "username": "admin",
+  "password": "{{adminPassword}}"
+}
+
+### 02. Inspect permission catalog
+# Identity list APIs query the writable store; JSON-provided users are not necessarily listed there.
+# @name permissionCatalog
+GET {{baseUrl}}/elsa/api/identity/permissions
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 03. Configurator login
+# @name configuratorLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "configurator",
+  "password": "{{samplePassword}}"
+}
+
+### 04. Publish expense-claim-v1 (configurationJson Literal / String)
+# HTTP 200: check workflowDefinition.isPublished. Existing definition publication may create a newer version.
+# @name publishClaim
+POST {{baseUrl}}/elsa/api/workflow-definitions
+Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "publish": true,
+  "model": {
+    "definitionId": "expense-claim-v1",
+    "name": "Expense Claim",
+    "description": "configurationJson interpreter backed by native Elsa User Tasks",
+    "root": {
+      "id": "expense-claim",
+      "name": "ExpenseClaim",
+      "configurationJson": {
+        "expression": {
+          "value": "{\"id\":\"expense-claim\",\"version\":1,\"definition\":{\"name\":\"Expense Claim\",\"attributes\":[{\"key\":\"firstName\",\"type\":\"string\",\"required\":true},{\"key\":\"lastName\",\"type\":\"string\",\"required\":true},{\"key\":\"claimAmount\",\"type\":\"decimal\",\"required\":true}],\"startStage\":\"A\",\"stages\":[{\"key\":\"A\",\"name\":\"A: Initial review (Alice/Amy bucket)\",\"assignment\":{\"policy\":\"bucket\",\"members\":[\"alice\",\"amy\"]},\"approveTo\":\"B\",\"rejectTo\":\"$requester\"},{\"key\":\"B\",\"name\":\"B: Claims review (Bella/Bob bucket)\",\"assignment\":{\"policy\":\"bucket\",\"members\":[\"bella\",\"bob\"]},\"approveTo\":\"D\",\"rejectTo\":\"A\",\"approveRules\":[{\"when\":{\"attribute\":\"claimAmount\",\"operator\":\"greaterThan\",\"value\":5000},\"destination\":\"C\"}]},{\"key\":\"C\",\"name\":\"C: High value approval (Clara)\",\"assignment\":{\"policy\":\"condition\",\"members\":[\"clara\"],\"rules\":[{\"when\":{\"attribute\":\"claimAmount\",\"operator\":\"greaterThan\",\"value\":5000},\"userId\":\"clara\"}]},\"approveTo\":\"D\",\"rejectTo\":\"$rejected\"},{\"key\":\"D\",\"name\":\"D: Final approval (Dan)\",\"assignment\":{\"policy\":\"specific\",\"members\":[\"dan\"],\"userId\":\"dan\"},\"approveTo\":\"$completed\",\"rejectTo\":\"$requester\"}]}}",
+          "type": "Literal"
+        },
+        "typeName": "String"
+      },
+      "type": "Tickets.TicketFlow",
+      "version": 1
+    },
+    "inputs": [
+      {
+        "name": "requesterId",
+        "type": "String"
+      },
+      {
+        "name": "firstName",
+        "type": "String"
+      },
+      {
+        "name": "lastName",
+        "type": "String"
+      },
+      {
+        "name": "claimAmount",
+        "type": "Decimal"
+      }
+    ]
+  }
+}
+
+### 05. Requester login
+# @name requesterLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "requester",
+  "password": "{{samplePassword}}"
+}
+
+### 06. Submit 6000; save workflowState.id
+# Check subStatus=Suspended and no incident. For 4000/5000, skip ALL C requests and go straight from B to D.
+# @name startClaim
+POST {{baseUrl}}/elsa/api/workflow-definitions/expense-claim-v1/execute
+Authorization: Bearer {{requesterLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "correlationId": "CLAIM-{{$guid}}",
   "input": {
     "requesterId": "requester",
     "firstName": "Pranav",
@@ -1448,100 +1529,343 @@ Content-Type: application/json
   }
 }
 
-### 7. Log in as a stage A reviewer
+### 07. Requester effective permissions
+# @name requesterPermissions
+GET {{baseUrl}}/elsa/api/identity/me/permissions
+Authorization: Bearer {{requesterLogin.response.body.$.accessToken}}
+
+
+### 08. Stage A: login as alice
+# @name aliceLogin
 POST {{baseUrl}}/elsa/api/identity/login
 Content-Type: application/json
 
-{"username":"alice","password":"Password123!"}
+{
+  "username": "alice",
+  "password": "{{samplePassword}}"
+}
 
-### 8. Native Elsa available bucket; copy an ID and its revision
-GET {{baseUrl}}/elsa/api/user-tasks?scope=available
-Authorization: Bearer {{reviewerToken}}
+### 09. Stage A: find available task; wait/retry until items is nonempty
+# Use this new task ID, never the previous stage task ID. If empty after a 202, repeat this GET before continuing.
+# @name aTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=available&workflowInstanceId={{startClaim.response.body.$.workflowState.id}}&includeTotalCount=true
+Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
 
-### 9. Claim the bucket task
-POST {{baseUrl}}/elsa/api/user-tasks/{{taskId}}/claim
-Authorization: Bearer {{reviewerToken}}
-Content-Type: application/json
 
-{"expectedRevision": {{revision}}, "operationId": "{{$guid}}"}
-
-### 10. Refresh detail to get the current revision and allowedActions
-GET {{baseUrl}}/elsa/api/user-tasks/{{taskId}}
-Authorization: Bearer {{reviewerToken}}
-
-### 11. Approve as the owner (use the revision returned by the latest GET)
-# A 202 means accepted. Requery tasks to observe completion and the next stage.
-POST {{baseUrl}}/elsa/api/user-tasks/{{taskId}}/complete
-Authorization: Bearer {{reviewerToken}}
-Content-Type: application/json
-
-{"expectedRevision": {{revision}}, "operationId": "{{$guid}}", "actionKey":"Approve", "data":{}}
-
-### 12. Or reject, with a reason
-POST {{baseUrl}}/elsa/api/user-tasks/{{taskId}}/complete
-Authorization: Bearer {{reviewerToken}}
-Content-Type: application/json
-
-{"expectedRevision": {{revision}}, "operationId": "{{$guid}}", "actionKey":"Reject", "data":{"reason":"Please correct the submitted amount"}}
-
-### 13. Read assigned work as the current actor
-# Next owners: B = Bella/Bob (claim first), C = Clara if amount > 5000, D = Dan.
-# Replace reviewerToken with that user's token before acting on the new task.
-GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned
-Authorization: Bearer {{reviewerToken}}
-
-### 14. Resubmit a returned correction task as the requester
-# Use the correction task ID and current revision, not the rejected review task ID.
-POST {{baseUrl}}/elsa/api/user-tasks/{{taskId}}/complete
-Authorization: Bearer {{requesterToken}}
+### 10. Stage A: alice claims bucket ownership
+# expectedRevision must be a JSON number after substitution; the collection writes numeric references without quotes.
+# @name aClaim
+POST {{baseUrl}}/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}/claim
+Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
 {
-  "expectedRevision": {{revision}},
+  "expectedRevision": {{aTasks.response.body.$.items[0].revision}},
+  "operationId": "{{$guid}}"
+}
+
+### 11. Stage A: read latest detail/revision
+# @name aDetail
+GET {{baseUrl}}/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}
+Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
+
+
+### 12. Stage A: Approve (or choose its Reject alternative below INSTEAD)
+# Expect 202 accepted/Completing, then allow Elsa to resume. D approval ends this claim.
+# @name aApprove
+POST {{baseUrl}}/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{aDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Approve",
+  "data": {
+    "comment": "A reviewed and approved"
+  }
+}
+
+### 13. Stage B: login as bob
+# @name bobLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "bob",
+  "password": "{{samplePassword}}"
+}
+
+### 14. Stage B: find available task; wait/retry until items is nonempty
+# Use this new task ID, never the previous stage task ID. If empty after a 202, repeat this GET before continuing.
+# @name bTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=available&workflowInstanceId={{startClaim.response.body.$.workflowState.id}}&includeTotalCount=true
+Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
+
+
+### 15. Stage B: bob claims bucket ownership
+# expectedRevision must be a JSON number after substitution; the collection writes numeric references without quotes.
+# @name bClaim
+POST {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}/claim
+Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{bTasks.response.body.$.items[0].revision}},
+  "operationId": "{{$guid}}"
+}
+
+### 16. Stage B: read latest detail/revision
+# @name bDetail
+GET {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}
+Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
+
+
+### 17. Stage B: Approve (or choose its Reject alternative below INSTEAD)
+# Expect 202 accepted/Completing, then allow Elsa to resume. D approval ends this claim.
+# @name bApprove
+POST {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{bDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Approve",
+  "data": {
+    "comment": "B reviewed and approved"
+  }
+}
+
+### 18. Stage C: login as clara
+# @name claraLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "clara",
+  "password": "{{samplePassword}}"
+}
+
+### 19. Stage C: find assigned task; wait/retry until items is nonempty
+# Use this new task ID, never the previous stage task ID. If empty after a 202, repeat this GET before continuing. For C, amount must be > 5000.
+# @name cTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&workflowInstanceId={{startClaim.response.body.$.workflowState.id}}&includeTotalCount=true
+Authorization: Bearer {{claraLogin.response.body.$.accessToken}}
+
+
+### 20. Stage C: read latest detail/revision
+# @name cDetail
+GET {{baseUrl}}/elsa/api/user-tasks/{{cTasks.response.body.$.items[0].id}}
+Authorization: Bearer {{claraLogin.response.body.$.accessToken}}
+
+
+### 21. Stage C: Approve (or choose its Reject alternative below INSTEAD)
+# Expect 202 accepted/Completing, then allow Elsa to resume. D approval ends this claim.
+# @name cApprove
+POST {{baseUrl}}/elsa/api/user-tasks/{{cTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{claraLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{cDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Approve",
+  "data": {
+    "comment": "C reviewed and approved"
+  }
+}
+
+### 22. Stage D: login as dan
+# @name danLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "dan",
+  "password": "{{samplePassword}}"
+}
+
+### 23. Stage D: find assigned task; wait/retry until items is nonempty
+# Use this new task ID, never the previous stage task ID. If empty after a 202, repeat this GET before continuing.
+# @name dTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&workflowInstanceId={{startClaim.response.body.$.workflowState.id}}&includeTotalCount=true
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
+
+
+### 24. Stage D: read latest detail/revision
+# @name dDetail
+GET {{baseUrl}}/elsa/api/user-tasks/{{dTasks.response.body.$.items[0].id}}
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
+
+
+### 25. Stage D: Approve (or choose its Reject alternative below INSTEAD)
+# Expect 202 accepted/Completing, then allow Elsa to resume. D approval ends this claim.
+# @name dApprove
+POST {{baseUrl}}/elsa/api/user-tasks/{{dTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{dDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Approve",
+  "data": {
+    "comment": "D reviewed and approved"
+  }
+}
+
+### 26. Final instance: Finished and output.ticketStatus=Completed
+# Poll until Finished; approved business outcome is workflowState.output.ticketStatus=Completed.
+# @name finishedInstance
+GET {{baseUrl}}/elsa/api/workflow-instances/{{startClaim.response.body.$.workflowState.id}}
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 27. All four stage tasks for this claim
+# Completed A/B/C/D in one list is expected. Each is a distinct task in the same workflow instance.
+# @name allStageTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=all&workflowInstanceId={{startClaim.response.body.$.workflowState.id}}&includeTotalCount=true
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 28. A task event history
+# @name aEvents
+GET {{baseUrl}}/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}/events
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 29. B task event history
+# @name bEvents
+GET {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}/events
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 30. C task event history
+# @name cEvents
+GET {{baseUrl}}/elsa/api/user-tasks/{{cTasks.response.body.$.items[0].id}}/events
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 31. D task event history
+# @name dEvents
+GET {{baseUrl}}/elsa/api/user-tasks/{{dTasks.response.body.$.items[0].id}}/events
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 32. Workflow journal
+# @name claimJournal
+GET {{baseUrl}}/elsa/api/workflow-instances/{{startClaim.response.body.$.workflowState.id}}/journal
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+# END MAIN SEQUENCE
+# ---------------------------------------------------------------------------
+# OPTIONAL ALTERNATIVES: use a NEW claim, stop at the desired active stage,
+# then run its Reject request INSTEAD OF the stage's Approve request.
+# Do not run these on the already completed happy-path tasks above.
+# Refresh that stage's Detail request immediately before its Reject request.
+# Re-run startClaim + discovery as necessary; named references track the last response.
+
+
+### 33. ALTERNATIVE Reject A -> requester correction, then A
+# @name aReject
+POST {{baseUrl}}/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{aDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Reject",
+  "data": {
+    "reason": "A: please correct/review the claim"
+  }
+}
+
+### 34. ALTERNATIVE Reject B -> new A visit
+# @name bReject
+POST {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{bDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Reject",
+  "data": {
+    "reason": "B: please correct/review the claim"
+  }
+}
+
+### 35. ALTERNATIVE Reject C -> terminal Rejected
+# @name cReject
+POST {{baseUrl}}/elsa/api/user-tasks/{{cTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{claraLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{cDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Reject",
+  "data": {
+    "reason": "C: please correct/review the claim"
+  }
+}
+
+### 36. ALTERNATIVE Reject D -> requester correction, then D
+# @name dReject
+POST {{baseUrl}}/elsa/api/user-tasks/{{dTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{dDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Reject",
+  "data": {
+    "reason": "D: please correct/review the claim"
+  }
+}
+
+### 37. After A/D rejection: requester finds correction task
+# Find title Correct and resubmit Expense Claim. Use its ID, not the rejected stage ID.
+# @name correctionTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&workflowInstanceId={{startClaim.response.body.$.workflowState.id}}
+Authorization: Bearer {{requesterLogin.response.body.$.accessToken}}
+
+
+### 38. Read correction detail
+# @name correctionDetail
+GET {{baseUrl}}/elsa/api/user-tasks/{{correctionTasks.response.body.$.items[0].id}}
+Authorization: Bearer {{requesterLogin.response.body.$.accessToken}}
+
+
+### 39. Resubmit corrected attributes as requester
+# Same instance resumes the rejected stage. Re-run that stage discovery/detail and approval. Correction at D does NOT replay B/C.
+# @name resubmitCorrection
+POST {{baseUrl}}/elsa/api/user-tasks/{{correctionTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{requesterLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{correctionDetail.response.body.$.revision}},
   "operationId": "{{$guid}}",
   "actionKey": "Resubmit",
-  "data": {"attributes":{"firstName":"Pranav","lastName":"Shah","claimAmount":6000}}
+  "data": {
+    "attributes": {
+      "firstName": "Pranav",
+      "lastName": "Shah",
+      "claimAmount": 4000
+    }
+  }
 }
 
-### 15. Native task history
-GET {{baseUrl}}/elsa/api/user-tasks/{{taskId}}/events
-Authorization: Bearer {{reviewerToken}}
-
-### 16. Log in as supervisor
-POST {{baseUrl}}/elsa/api/identity/login
-Content-Type: application/json
-
-{"username":"supervisor","password":"Password123!"}
-
-### 17. Supervisor view (also includes unassigned work)
-GET {{baseUrl}}/elsa/api/user-tasks?scope=all
-Authorization: Bearer {{supervisorToken}}
-
-### 18. Supervisor assigns blocked/unassigned work using Elsa's native API
-POST {{baseUrl}}/elsa/api/user-tasks/{{taskId}}/assign
-Authorization: Bearer {{supervisorToken}}
-Content-Type: application/json
-
-{
-  "expectedRevision": {{revision}},
-  "operationId": "{{$guid}}",
-  "assignee": {"kind":"user","provider":"default","id":"alice"}
-}
-
-# Every new logical action needs a new operationId. For a retry of the SAME request,
-# resend the SAME operationId, body and expectedRevision rather than generating another ID.
-
-### 19. Instance journey (use admin/supervisor token)
-# Replace the instance ID returned by execute.
-GET {{baseUrl}}/elsa/api/user-tasks?scope=all&workflowInstanceId=REPLACE&includeTotalCount=true
-Authorization: Bearer {{supervisorToken}}
-
-### 20. Finished instance: output.ticketStatus distinguishes Completed from Rejected
-GET {{baseUrl}}/elsa/api/workflow-instances/REPLACE
-Authorization: Bearer {{supervisorToken}}
-
-# Reject routes: A -> requester -> A; B -> A; C -> terminal Rejected; D -> requester -> D.
-# Correction resumes the rejected stage; changing amount at D does not replay B/C.
+### 40. After rejection/resubmission: current business outcome
+# C rejection: Finished + Rejected. A/D correction: stays active until the resumed stage(s) are approved.
+# @name branchInstance
+GET {{baseUrl}}/elsa/api/workflow-instances/{{startClaim.response.body.$.workflowState.id}}
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
 ```
 
 ## Appendix G. Exact API verification script
@@ -1654,7 +1978,723 @@ Write-Host "PASS: $($captures.Count) API responses captured; tokens redacted"
 - workflow-requests/expense-claim.definition.json: complete native publication request.
 - workflow-requests/expense-claim.configuration.json: readable configuration source.
 - workflow-requests/submit.json and login-*.json: development curl body fixtures.
+- workflow-requests/Tickets.http: ordered default-fixture workflow.
+- workflow-requests/Identity-And-ABCD.http: native role/user creation and full A-B-C-D workflow; run in store-backed identity mode.
 - api-captures.json: all 148 original exchanges, authentication secrets redacted.
 - Elsa-3.9-Ticket-Workflow-API-Guide.pdf: API-only walkthrough.
 
 All essential source/configuration/request bodies are embedded in this Markdown, so it can be handed to another Codex on its own. Companion files make the curl examples easier to run. No real production secrets are included.
+
+## Appendix H. Role/user API setup and full A-B-C-D HTTP sequence
+
+This is a second, optional identity mode. Start a fresh research instance with:
+
+```powershell
+dotnet run --launch-profile http -- --Identity:UseConfigurationProviders=false
+```
+
+The native administrator is bootstrapped at startup. Then run the requests below one at a time in VS Code REST Client. Named responses substitute generated user IDs, tokens, task IDs and current revisions. Do not run Reject alternatives after the completed approval path. Store-backed preview data is still ephemeral. The five role creations, nine user creations, generated-ID workflow and all four approvals were verified through 47 actual HTTP requests.
+
+```http
+# Expense Claim: API-created accounts; execute requests ONE AT A TIME in order.
+# VS Code REST Client extension: named responses supply tokens, IDs and revisions.
+# Do not use Send All: completion is asynchronous and optional branches must not run together.
+# Other clients: copy the values from the named response manually.
+#
+# MAIN SEQUENCE: setup -> publish -> execute 6000 -> Alice A -> Bob B -> Clara C -> Dan D -> Finished.
+# The alternative rejection/update requests at the bottom are NOT part of that happy path.
+# New operationId for a new command. For retry, resend the SAME body/ID/revision;
+# {{$guid}} changes on every send, so save the original request before retrying it.
+@baseUrl = http://localhost:5000
+@adminPassword = password
+@samplePassword = Password123!
+
+
+# REQUIRED API-IDENTITY MODE (leave the default JSON fixture mode unchanged):
+# dotnet run --launch-profile http -- --Identity:UseConfigurationProviders=false
+# In preview this creates an in-memory admin; all API-created accounts disappear on restart.
+# On a fresh server, admin is bootstrapped by Elsa. No anonymous create-admin endpoint exists.
+# Use the configured admin password. Create roles/users once; do not rerun POST setup blindly.
+# Native POST users accepts name/password/roles; it GENERATES id (not the username).
+# All workflow candidate IDs below are taken from the creation responses.
+
+
+### 01. Admin login (bootstrap / diagnostic access)
+# @name adminLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "{{adminPassword}}"
+}
+
+### 02. Create Supervisor role
+# @name createRoleSupervisor
+POST {{baseUrl}}/elsa/api/identity/roles
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "id": "Supervisor",
+  "permissions": [
+    "user-tasks:view",
+    "user-tasks:assign",
+    "user-tasks:supervise"
+  ],
+  "name": "Supervisor"
+}
+
+### 03. Create Requester role
+# @name createRoleRequester
+POST {{baseUrl}}/elsa/api/identity/roles
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "id": "Requester",
+  "permissions": [
+    "user-tasks:view",
+    "user-tasks:complete",
+    "workflows/definitions:view",
+    "workflows/definitions:execute"
+  ],
+  "name": "Requester"
+}
+
+### 04. Create Administrator role
+# @name createRoleAdministrator
+POST {{baseUrl}}/elsa/api/identity/roles
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "id": "Administrator",
+  "permissions": [
+    "*"
+  ],
+  "name": "Administrator"
+}
+
+### 05. Create Approver role
+# @name createRoleApprover
+POST {{baseUrl}}/elsa/api/identity/roles
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "id": "Approver",
+  "permissions": [
+    "user-tasks:view",
+    "user-tasks:claim",
+    "user-tasks:complete"
+  ],
+  "name": "Approver"
+}
+
+### 06. Create Configurator role
+# @name createRoleConfigurator
+POST {{baseUrl}}/elsa/api/identity/roles
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "id": "Configurator",
+  "permissions": [
+    "workflows/definitions:*",
+    "workflows/instances:view"
+  ],
+  "name": "Configurator"
+}
+
+### 07. List stored roles
+# @name listRoles
+GET {{baseUrl}}/elsa/api/identity/roles
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 08. Create configurator; keep response.id
+# @name createConfigurator
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "configurator",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Configurator"
+  ]
+}
+
+### 09. Create requester; keep response.id
+# @name createRequester
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "requester",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Requester"
+  ]
+}
+
+### 10. Create alice; keep response.id
+# @name createAlice
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "alice",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Approver"
+  ]
+}
+
+### 11. Create amy; keep response.id
+# @name createAmy
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "amy",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Approver"
+  ]
+}
+
+### 12. Create bella; keep response.id
+# @name createBella
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "bella",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Approver"
+  ]
+}
+
+### 13. Create bob; keep response.id
+# @name createBob
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "bob",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Approver"
+  ]
+}
+
+### 14. Create clara; keep response.id
+# @name createClara
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "clara",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Approver"
+  ]
+}
+
+### 15. Create dan; keep response.id
+# @name createDan
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "dan",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Approver"
+  ]
+}
+
+### 16. Create supervisor; keep response.id
+# @name createSupervisor
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "supervisor",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Supervisor"
+  ]
+}
+
+### 17. List stored users (IDs are generated)
+# @name listUsers
+GET {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 18. Configurator login
+# @name configuratorLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "configurator",
+  "password": "{{samplePassword}}"
+}
+
+### 19. Publish expense-claim-v1 (configurationJson Literal / String)
+# HTTP 200: check workflowDefinition.isPublished. Existing definition publication may create a newer version.
+# @name publishClaim
+POST {{baseUrl}}/elsa/api/workflow-definitions
+Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "publish": true,
+  "model": {
+    "definitionId": "expense-claim-v1",
+    "name": "Expense Claim",
+    "description": "configurationJson interpreter backed by native Elsa User Tasks",
+    "root": {
+      "id": "expense-claim",
+      "name": "ExpenseClaim",
+      "configurationJson": {
+        "expression": {
+          "value": "{\"id\":\"expense-claim\",\"version\":1,\"definition\":{\"name\":\"Expense Claim\",\"attributes\":[{\"key\":\"firstName\",\"type\":\"string\",\"required\":true},{\"key\":\"lastName\",\"type\":\"string\",\"required\":true},{\"key\":\"claimAmount\",\"type\":\"decimal\",\"required\":true}],\"startStage\":\"A\",\"stages\":[{\"key\":\"A\",\"name\":\"A: Initial review (Alice/Amy bucket)\",\"assignment\":{\"policy\":\"bucket\",\"members\":[\"{{createAlice.response.body.$.id}}\",\"{{createAmy.response.body.$.id}}\"]},\"approveTo\":\"B\",\"rejectTo\":\"$requester\"},{\"key\":\"B\",\"name\":\"B: Claims review (Bella/Bob bucket)\",\"assignment\":{\"policy\":\"bucket\",\"members\":[\"{{createBella.response.body.$.id}}\",\"{{createBob.response.body.$.id}}\"]},\"approveTo\":\"D\",\"rejectTo\":\"A\",\"approveRules\":[{\"when\":{\"attribute\":\"claimAmount\",\"operator\":\"greaterThan\",\"value\":5000},\"destination\":\"C\"}]},{\"key\":\"C\",\"name\":\"C: High value approval (Clara)\",\"assignment\":{\"policy\":\"condition\",\"members\":[\"{{createClara.response.body.$.id}}\"],\"rules\":[{\"when\":{\"attribute\":\"claimAmount\",\"operator\":\"greaterThan\",\"value\":5000},\"userId\":\"{{createClara.response.body.$.id}}\"}]},\"approveTo\":\"D\",\"rejectTo\":\"$rejected\"},{\"key\":\"D\",\"name\":\"D: Final approval (Dan)\",\"assignment\":{\"policy\":\"specific\",\"members\":[\"{{createDan.response.body.$.id}}\"],\"userId\":\"{{createDan.response.body.$.id}}\"},\"approveTo\":\"$completed\",\"rejectTo\":\"$requester\"}]}}",
+          "type": "Literal"
+        },
+        "typeName": "String"
+      },
+      "type": "Tickets.TicketFlow",
+      "version": 1
+    },
+    "inputs": [
+      {
+        "name": "requesterId",
+        "type": "String"
+      },
+      {
+        "name": "firstName",
+        "type": "String"
+      },
+      {
+        "name": "lastName",
+        "type": "String"
+      },
+      {
+        "name": "claimAmount",
+        "type": "Decimal"
+      }
+    ]
+  }
+}
+
+### 20. Requester login
+# @name requesterLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "requester",
+  "password": "{{samplePassword}}"
+}
+
+### 21. Submit 6000; save workflowState.id
+# Check subStatus=Suspended and no incident. For 4000/5000, skip ALL C requests and go straight from B to D.
+# @name startClaim
+POST {{baseUrl}}/elsa/api/workflow-definitions/expense-claim-v1/execute
+Authorization: Bearer {{requesterLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "correlationId": "CLAIM-{{$guid}}",
+  "input": {
+    "requesterId": "{{createRequester.response.body.$.id}}",
+    "firstName": "Pranav",
+    "lastName": "Shah",
+    "claimAmount": 6000
+  }
+}
+
+### 22. Requester effective permissions
+# @name requesterPermissions
+GET {{baseUrl}}/elsa/api/identity/me/permissions
+Authorization: Bearer {{requesterLogin.response.body.$.accessToken}}
+
+
+### 23. Stage A: login as alice
+# @name aliceLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "alice",
+  "password": "{{samplePassword}}"
+}
+
+### 24. Stage A: find available task; wait/retry until items is nonempty
+# Use this new task ID, never the previous stage task ID. If empty after a 202, repeat this GET before continuing.
+# @name aTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=available&workflowInstanceId={{startClaim.response.body.$.workflowState.id}}&includeTotalCount=true
+Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
+
+
+### 25. Stage A: alice claims bucket ownership
+# expectedRevision must be a JSON number after substitution; the collection writes numeric references without quotes.
+# @name aClaim
+POST {{baseUrl}}/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}/claim
+Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{aTasks.response.body.$.items[0].revision}},
+  "operationId": "{{$guid}}"
+}
+
+### 26. Stage A: read latest detail/revision
+# @name aDetail
+GET {{baseUrl}}/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}
+Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
+
+
+### 27. Stage A: Approve (or choose its Reject alternative below INSTEAD)
+# Expect 202 accepted/Completing, then allow Elsa to resume. D approval ends this claim.
+# @name aApprove
+POST {{baseUrl}}/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{aDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Approve",
+  "data": {
+    "comment": "A reviewed and approved"
+  }
+}
+
+### 28. Stage B: login as bob
+# @name bobLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "bob",
+  "password": "{{samplePassword}}"
+}
+
+### 29. Stage B: find available task; wait/retry until items is nonempty
+# Use this new task ID, never the previous stage task ID. If empty after a 202, repeat this GET before continuing.
+# @name bTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=available&workflowInstanceId={{startClaim.response.body.$.workflowState.id}}&includeTotalCount=true
+Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
+
+
+### 30. Stage B: bob claims bucket ownership
+# expectedRevision must be a JSON number after substitution; the collection writes numeric references without quotes.
+# @name bClaim
+POST {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}/claim
+Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{bTasks.response.body.$.items[0].revision}},
+  "operationId": "{{$guid}}"
+}
+
+### 31. Stage B: read latest detail/revision
+# @name bDetail
+GET {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}
+Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
+
+
+### 32. Stage B: Approve (or choose its Reject alternative below INSTEAD)
+# Expect 202 accepted/Completing, then allow Elsa to resume. D approval ends this claim.
+# @name bApprove
+POST {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{bDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Approve",
+  "data": {
+    "comment": "B reviewed and approved"
+  }
+}
+
+### 33. Stage C: login as clara
+# @name claraLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "clara",
+  "password": "{{samplePassword}}"
+}
+
+### 34. Stage C: find assigned task; wait/retry until items is nonempty
+# Use this new task ID, never the previous stage task ID. If empty after a 202, repeat this GET before continuing. For C, amount must be > 5000.
+# @name cTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&workflowInstanceId={{startClaim.response.body.$.workflowState.id}}&includeTotalCount=true
+Authorization: Bearer {{claraLogin.response.body.$.accessToken}}
+
+
+### 35. Stage C: read latest detail/revision
+# @name cDetail
+GET {{baseUrl}}/elsa/api/user-tasks/{{cTasks.response.body.$.items[0].id}}
+Authorization: Bearer {{claraLogin.response.body.$.accessToken}}
+
+
+### 36. Stage C: Approve (or choose its Reject alternative below INSTEAD)
+# Expect 202 accepted/Completing, then allow Elsa to resume. D approval ends this claim.
+# @name cApprove
+POST {{baseUrl}}/elsa/api/user-tasks/{{cTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{claraLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{cDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Approve",
+  "data": {
+    "comment": "C reviewed and approved"
+  }
+}
+
+### 37. Stage D: login as dan
+# @name danLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "dan",
+  "password": "{{samplePassword}}"
+}
+
+### 38. Stage D: find assigned task; wait/retry until items is nonempty
+# Use this new task ID, never the previous stage task ID. If empty after a 202, repeat this GET before continuing.
+# @name dTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&workflowInstanceId={{startClaim.response.body.$.workflowState.id}}&includeTotalCount=true
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
+
+
+### 39. Stage D: read latest detail/revision
+# @name dDetail
+GET {{baseUrl}}/elsa/api/user-tasks/{{dTasks.response.body.$.items[0].id}}
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
+
+
+### 40. Stage D: Approve (or choose its Reject alternative below INSTEAD)
+# Expect 202 accepted/Completing, then allow Elsa to resume. D approval ends this claim.
+# @name dApprove
+POST {{baseUrl}}/elsa/api/user-tasks/{{dTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{dDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Approve",
+  "data": {
+    "comment": "D reviewed and approved"
+  }
+}
+
+### 41. Final instance: Finished and output.ticketStatus=Completed
+# Poll until Finished; approved business outcome is workflowState.output.ticketStatus=Completed.
+# @name finishedInstance
+GET {{baseUrl}}/elsa/api/workflow-instances/{{startClaim.response.body.$.workflowState.id}}
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 42. All four stage tasks for this claim
+# Completed A/B/C/D in one list is expected. Each is a distinct task in the same workflow instance.
+# @name allStageTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=all&workflowInstanceId={{startClaim.response.body.$.workflowState.id}}&includeTotalCount=true
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 43. A task event history
+# @name aEvents
+GET {{baseUrl}}/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}/events
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 44. B task event history
+# @name bEvents
+GET {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}/events
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 45. C task event history
+# @name cEvents
+GET {{baseUrl}}/elsa/api/user-tasks/{{cTasks.response.body.$.items[0].id}}/events
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 46. D task event history
+# @name dEvents
+GET {{baseUrl}}/elsa/api/user-tasks/{{dTasks.response.body.$.items[0].id}}/events
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 47. Workflow journal
+# @name claimJournal
+GET {{baseUrl}}/elsa/api/workflow-instances/{{startClaim.response.body.$.workflowState.id}}/journal
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+# END MAIN SEQUENCE
+# ---------------------------------------------------------------------------
+# OPTIONAL ALTERNATIVES: use a NEW claim, stop at the desired active stage,
+# then run its Reject request INSTEAD OF the stage's Approve request.
+# Do not run these on the already completed happy-path tasks above.
+# Refresh that stage's Detail request immediately before its Reject request.
+# Re-run startClaim + discovery as necessary; named references track the last response.
+
+
+### 48. ALTERNATIVE Reject A -> requester correction, then A
+# @name aReject
+POST {{baseUrl}}/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{aDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Reject",
+  "data": {
+    "reason": "A: please correct/review the claim"
+  }
+}
+
+### 49. ALTERNATIVE Reject B -> new A visit
+# @name bReject
+POST {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{bDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Reject",
+  "data": {
+    "reason": "B: please correct/review the claim"
+  }
+}
+
+### 50. ALTERNATIVE Reject C -> terminal Rejected
+# @name cReject
+POST {{baseUrl}}/elsa/api/user-tasks/{{cTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{claraLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{cDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Reject",
+  "data": {
+    "reason": "C: please correct/review the claim"
+  }
+}
+
+### 51. ALTERNATIVE Reject D -> requester correction, then D
+# @name dReject
+POST {{baseUrl}}/elsa/api/user-tasks/{{dTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{dDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Reject",
+  "data": {
+    "reason": "D: please correct/review the claim"
+  }
+}
+
+### 52. After A/D rejection: requester finds correction task
+# Find title Correct and resubmit Expense Claim. Use its ID, not the rejected stage ID.
+# @name correctionTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&workflowInstanceId={{startClaim.response.body.$.workflowState.id}}
+Authorization: Bearer {{requesterLogin.response.body.$.accessToken}}
+
+
+### 53. Read correction detail
+# @name correctionDetail
+GET {{baseUrl}}/elsa/api/user-tasks/{{correctionTasks.response.body.$.items[0].id}}
+Authorization: Bearer {{requesterLogin.response.body.$.accessToken}}
+
+
+### 54. Resubmit corrected attributes as requester
+# Same instance resumes the rejected stage. Re-run that stage discovery/detail and approval. Correction at D does NOT replay B/C.
+# @name resubmitCorrection
+POST {{baseUrl}}/elsa/api/user-tasks/{{correctionTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{requesterLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{correctionDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Resubmit",
+  "data": {
+    "attributes": {
+      "firstName": "Pranav",
+      "lastName": "Shah",
+      "claimAmount": 4000
+    }
+  }
+}
+
+### 55. After rejection/resubmission: current business outcome
+# C rejection: Finished + Rejected. A/D correction: stays active until the resumed stage(s) are approved.
+# @name branchInstance
+GET {{baseUrl}}/elsa/api/workflow-instances/{{startClaim.response.body.$.workflowState.id}}
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### 56. OPTIONAL replace Approver role permissions
+# Preserve all intended permissions. Re-login affected users after identity changes.
+# @name updateApproverRole
+PUT {{baseUrl}}/elsa/api/identity/roles/Approver
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Approver",
+  "permissions": [
+    "user-tasks:view",
+    "user-tasks:claim",
+    "user-tasks:complete"
+  ]
+}
+
+### 57. OPTIONAL update Amy roles/password
+# Path parameter is generated user ID. Supply the full intended role list; login again after changing it.
+# @name updateAmy
+PUT {{baseUrl}}/elsa/api/identity/users/{{createAmy.response.body.$.id}}
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Approver"
+  ]
+}
+```
