@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using IlWorkflow.Api.Hosting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Elsa.Extensions;
 using Elsa.Persistence.EFCore.Extensions;
@@ -17,17 +18,27 @@ using Elsa.UserTasks.Persistence.EFCore.PostgreSql.Extensions;
 using IlWorkflow.Api.Tickets;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Configuration.AddJsonFile("Samples/external-users.json", optional: false, reloadOnChange: false);
+// Reapply normal overrides after the research directory defaults.
+builder.Configuration.AddJsonFile("appsettings.json", optional: false);
+builder.Configuration.AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true);
+if (builder.Environment.IsDevelopment()) builder.Configuration.AddUserSecrets<Program>();
+builder.Configuration.AddEnvironmentVariables().AddCommandLine(args);
 var useConfigurationIdentity = builder.Environment.IsDevelopment() && builder.Configuration.GetValue("Identity:UseConfigurationProviders", true);
 if (useConfigurationIdentity) builder.Configuration.AddJsonFile("Samples/identity.json", optional: false, reloadOnChange: true);
 var configuration = builder.Configuration;
 var swaggerPreview = builder.Environment.IsDevelopment() && configuration.GetValue<bool>("SwaggerPreview");
+var identityPostgres = configuration.GetValue("Identity:UsePostgreSql", !swaggerPreview);
+if (identityPostgres && useConfigurationIdentity)
+    throw new InvalidOperationException("Set Identity:UseConfigurationProviders=false when Identity:UsePostgreSql=true so users authenticate against the database.");
+var requiresPostgres = identityPostgres || !swaggerPreview;
 var connectionString = configuration.GetConnectionString("Elsa")!;
 var signingKey = configuration["Identity:Tokens:SigningKey"];
-if (swaggerPreview && string.IsNullOrWhiteSpace(signingKey))
+if (!requiresPostgres && string.IsNullOrWhiteSpace(signingKey))
     configuration["Identity:Tokens:SigningKey"] = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(48));
-if (!swaggerPreview && (string.IsNullOrWhiteSpace(signingKey) || signingKey.Length < 32))
+if (requiresPostgres && (string.IsNullOrWhiteSpace(signingKey) || signingKey.Length < 32))
     throw new InvalidOperationException("Set Identity:Tokens:SigningKey to a random secret of at least 32 characters using dotnet user-secrets.");
-if (!swaggerPreview && string.IsNullOrWhiteSpace(configuration["Identity:Admin:Password"]))
+if (!useConfigurationIdentity && string.IsNullOrWhiteSpace(configuration["Identity:Admin:Password"]))
     throw new InvalidOperationException("Set Identity:Admin:Password using dotnet user-secrets.");
 
 builder.Services.AddElsa(elsa =>
@@ -40,7 +51,7 @@ builder.Services.AddElsa(elsa =>
                 identity.UseConfigurationBasedUserProvider(options => configuration.GetSection("Identity").Bind(options));
                 identity.UseConfigurationBasedRoleProvider(options => configuration.GetSection("Identity").Bind(options));
             }
-            if (!swaggerPreview) identity.UseEntityFrameworkCore(ef => ef.UsePostgreSql(connectionString));
+            if (identityPostgres) identity.UseEntityFrameworkCore(ef => ef.UsePostgreSql(connectionString));
             if (!useConfigurationIdentity) identity.UseDefaultAdmin(admin => admin
                 .WithAdminUserName(configuration["Identity:Admin:UserName"] ?? "admin")
                 .WithAdminRoleName("admin")
@@ -80,6 +91,8 @@ if (useConfigurationIdentity)
 
 
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddCompanyAuthentication(configuration, builder.Environment);
+builder.Services.AddScoped<TicketIdentity>();
 
 builder.Logging.AddSimpleConsole(options =>
 {
@@ -105,13 +118,15 @@ app.UseExceptionHandler(errors => errors.Run(async context =>
     context.Response.Headers["X-Trace-Id"] = context.TraceIdentifier;
     await context.Response.WriteAsJsonAsync(new { Code = "internal_error", Message = "An unexpected error occurred. Check server logs using the trace ID.", TraceId = context.TraceIdentifier });
 }));
-app.Logger.LogInformation("Storage mode: {StorageMode}", swaggerPreview ? "Swagger preview (in memory)" : "PostgreSQL");
+app.Logger.LogInformation("Workflow/task storage: {WorkflowStorage}; identity storage: {IdentityStorage}",
+    swaggerPreview ? "in memory" : "PostgreSQL",
+    identityPostgres ? "PostgreSQL" : useConfigurationIdentity ? "sample JSON providers" : "in memory");
 var databaseSettings = new NpgsqlConnectionStringBuilder(connectionString);
 app.Logger.LogInformation("Database configured: Host={Host}; Port={Port}; Database={Database}; Username={Username}; SSL={SslMode}. Credentials omitted.",
     databaseSettings.Host, databaseSettings.Port, databaseSettings.Database, databaseSettings.Username, databaseSettings.SslMode);
-if (swaggerPreview)
+if (!requiresPostgres)
 {
-    app.Logger.LogInformation("SwaggerPreview=true: PostgreSQL connections and migrations are skipped. Set SwaggerPreview=false to enable database persistence.");
+    app.Logger.LogInformation("All stores use preview/sample providers; PostgreSQL connections and migrations are skipped.");
 }
 else if (app.Environment.IsDevelopment())
 {
@@ -136,7 +151,7 @@ else if (app.Environment.IsDevelopment())
             { app.Logger.LogInformation("Database ilworkflow was created by another process"); }
         }
         else app.Logger.LogInformation("Database ilworkflow already exists");
-        app.Logger.LogInformation("Database initialization complete. Elsa will apply management and runtime migrations during startup.");
+        app.Logger.LogInformation("Database initialization complete. Elsa will apply migrations for the enabled PostgreSQL stores during startup.");
     }
     catch (Exception exception)
     {
@@ -145,7 +160,9 @@ else if (app.Environment.IsDevelopment())
         throw;
     }
 }
-app.Lifetime.ApplicationStarted.Register(() => app.Logger.LogInformation("Application ready. Storage mode: {StorageMode}", swaggerPreview ? "in memory" : "PostgreSQL; Elsa startup migrations completed"));
+app.Lifetime.ApplicationStarted.Register(() => app.Logger.LogInformation(
+    "Application ready. IdentityPostgreSql={IdentityPostgreSql}; WorkflowPostgreSql={WorkflowPostgreSql}; enabled database migrations completed.",
+    identityPostgres, !swaggerPreview));
 
 app.Use(async (context, next) =>
 {
@@ -167,7 +184,7 @@ app.Use(async (context, next) =>
         app.Logger.LogInformation("{Method} {Path} => {StatusCode} in {ElapsedMs:F1} ms",
             context.Request.Method, context.Request.Path, context.Response.StatusCode, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
         if (context.Response.StatusCode == StatusCodes.Status401Unauthorized)
-            app.Logger.LogWarning("401: Authorization header present={HeaderPresent}. POST /elsa/api/identity/login, then paste accessToken into Swagger Authorize (JWT bearer field). Tokens from a different signing key or expired tokens must be replaced.",
+            app.Logger.LogWarning("401: Authorization header present={HeaderPresent}. Supply a valid Elsa or configured company access token. Check issuer, audience, signature and expiry.",
                 context.Request.Headers.ContainsKey("Authorization"));
         if (context.Response.StatusCode == StatusCodes.Status403Forbidden)
             app.Logger.LogWarning("403: Request denied by authorization. Authenticated={Authenticated}; check the account permissions.", context.User.Identity?.IsAuthenticated == true);

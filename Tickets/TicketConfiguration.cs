@@ -68,7 +68,7 @@ public static class TicketJson
         };
     }
 
-    public static async Task ValidateConfigurationAsync(TicketConfiguration configuration, IUserProvider users, CancellationToken cancellationToken = default)
+    public static async Task ValidateConfigurationAsync(TicketConfiguration configuration, TicketIdentity users, CancellationToken cancellationToken = default)
     {
         var definition = configuration.Definition;
         Require(configuration.Version > 0 && definition.Stages.Length > 0, "A version and stages are required.");
@@ -91,8 +91,7 @@ public static class TicketJson
             Require(new[] { "bucket", "specific", "condition" }.Contains(stage.Assignment.Policy), "Supported policies: bucket, specific, condition.");
             foreach (var member in stage.Assignment.Members)
             {
-                var user = await users.FindAsync(new UserFilter { Id = member }, cancellationToken);
-                Require(user is not null && user.Roles.Contains("Approver"), $"Unknown approver {member}.");
+                Require(await users.HasRoleAsync(member, "Approver", cancellationToken), $"Unknown approver {member}.");
             }
             if (stage.Assignment.Policy == "specific") Require(stage.Assignment.Members.Contains(stage.Assignment.UserId), "Specific assignee must be a candidate.");
             foreach (var rule in stage.Assignment.Rules ?? [])

@@ -1,0 +1,108 @@
+# One native Elsa UserTask, directly assigned to John. Run ONE request at a time.
+# The native Complete action represents approval; no custom actionDefinitions or form.
+# Run ./New-TestAccessToken.ps1; restart the app if the signing key was just created.
+# Paste its signed access token below. No Elsa login/password is used for John.
+# Admin publishes/starts the workflow; John's Approver token only reads/completes tasks.
+@baseUrl = http://localhost:5000
+@johnToken = PASTE_YOUR_GENERATED_TOKEN
+@adminPassword = password
+
+### 1. Admin login (use your configured admin password)
+# @name adminLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{"username":"admin","password":"{{adminPassword}}"}
+
+### 2. Publish the one-task workflow
+# @name publishJohn
+POST {{baseUrl}}/elsa/api/workflow-definitions
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "publish": true,
+  "model": {
+    "definitionId": "john-approval-v1",
+    "name": "John Approval",
+    "root": {
+      "id": "JohnApproval",
+      "type": "Elsa.UserTask",
+      "version": 1,
+      "title": {
+        "expression": {
+          "type": "Literal",
+          "value": "Please approve this request, John"
+        },
+        "typeName": "String"
+      },
+      "assignee": {
+        "expression": {
+          "type": "Literal",
+          "value": {
+            "tenantId": "",
+            "provider": "default",
+            "type": "User",
+            "id": "1234567890"
+          }
+        },
+        "typeName": "Object"
+      },
+      "candidateUsers": {
+        "expression": {
+          "type": "Literal",
+          "value": [
+            {
+              "tenantId": "",
+              "provider": "default",
+              "type": "User",
+              "id": "1234567890"
+            }
+          ]
+        },
+        "typeName": "Object"
+      }
+    }
+  }
+}
+
+### 3. Start an instance
+# @name startJohn
+POST {{baseUrl}}/elsa/api/workflow-definitions/john-approval-v1/execute
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{"correlationId":"JOHN-{{$guid}}","input":{}}
+
+### 4. John lists assigned tasks; retry if projection has not appeared yet
+# @name johnTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&workflowInstanceId={{startJohn.response.body.$.workflowState.id}}&includeTotalCount=true
+Authorization: Bearer {{johnToken}}
+
+### 5. Read current task revision (no claim needed: directly assigned to John)
+# @name johnDetail
+GET {{baseUrl}}/elsa/api/user-tasks/{{johnTasks.response.body.$.items[0].id}}
+Authorization: Bearer {{johnToken}}
+
+### 6. John approves using native Complete. Omit data: this task has no form.
+# New operationId for each new action; retry the identical body/UUID/revision after a transport failure.
+# @name johnApprove
+POST {{baseUrl}}/elsa/api/user-tasks/{{johnTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{johnToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{johnDetail.response.body.$.revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Complete"
+}
+
+### 7. Task should become Completed (completion is asynchronous; poll as needed)
+# @name completedJohn
+GET {{baseUrl}}/elsa/api/user-tasks/{{johnTasks.response.body.$.items[0].id}}
+Authorization: Bearer {{johnToken}}
+
+### 8. Admin verifies workflow status Finished; poll if still Running
+# @name johnInstance
+GET {{baseUrl}}/elsa/api/workflow-instances/{{startJohn.response.body.$.workflowState.id}}
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}

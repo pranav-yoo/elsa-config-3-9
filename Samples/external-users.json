@@ -1,0 +1,35 @@
+{
+  "ExternalAuth": {
+    "Enabled": false,
+    "Authority": "",
+    "Audience": "",
+    "SubjectClaim": "sub",
+    "DevelopmentTokens": {
+      "Enabled": false
+    },
+    "Users": [
+      {
+        "Provider": "Development",
+        "Subject": "1234567890",
+        "Id": "1234567890",
+        "Name": "John Doe",
+        "Roles": [
+          "Approver"
+        ]
+      }
+    ],
+    "RolePermissions": {
+      "Approver": [
+        "user-tasks:view",
+        "user-tasks:claim",
+        "user-tasks:complete"
+      ],
+      "Requester": [
+        "user-tasks:view",
+        "user-tasks:complete",
+        "workflows/definitions:view",
+        "workflows/definitions:execute"
+      ]
+    }
+  }
+}

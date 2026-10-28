@@ -505,8 +505,8 @@ Repeat the checks
 ./Tests/ConfigurationApi.ps1 -BaseUrl http://localhost:5000
 ```
 
-The test creates sample definitions and workflow instances in the target environment. Run it only against a disposable research instance. Full request/response bodies, apart from authentication redaction, are in docs/api-captures.json. The PDF uses explicitly labeled excerpts for readability.
+The test creates sample definitions and workflow instances in the target environment. Run it only against a disposable research instance. Full request/response bodies, apart from authentication redaction, are in docs/api-captures.json. Response excerpts are explicitly labeled for readability.
 
 Full requests and responses
 
-See docs/api-captures.json for complete captured exchanges and Tickets.http for reusable requests. The publication body is Samples/Definitions/expense-claim.definition.json. The PDF uses labeled response excerpts for readability; dynamic IDs, revisions and timestamps differ on your server.
+See docs/api-captures.json for complete captured exchanges and Tickets.http for reusable requests. The publication body is Samples/Definitions/expense-claim.definition.json. This guide uses labeled response excerpts for readability; dynamic IDs, revisions and timestamps differ on your server.

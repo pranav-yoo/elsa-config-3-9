@@ -126,8 +126,8 @@ def build(api):
 
 (ROOT/'Tickets.http').write_text(build(False),encoding='utf-8')
 (ROOT/'Identity-And-ABCD.http').write_text(build(True),encoding='utf-8')
-out=ROOT/'output/pdf/workflow-requests'
+out=ROOT/'output/documentation/workflow-requests'
 out.mkdir(parents=True,exist_ok=True)
 for name in ('Tickets.http','Identity-And-ABCD.http'):
     (out/name).write_text((ROOT/name).read_text(),encoding='utf-8')
-print('Created ordered fixture and API-provisioning collections in root and output/pdf/workflow-requests')
+print('Created ordered fixture and API-provisioning collections in root and output/documentation/workflow-requests')

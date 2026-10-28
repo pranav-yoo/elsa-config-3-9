@@ -1,0 +1,45 @@
+{
+  "publish": true,
+  "model": {
+    "definitionId": "john-approval-v1",
+    "name": "John Approval",
+    "root": {
+      "id": "JohnApproval",
+      "type": "Elsa.UserTask",
+      "version": 1,
+      "title": {
+        "expression": {
+          "type": "Literal",
+          "value": "Please approve this request, John"
+        },
+        "typeName": "String"
+      },
+      "assignee": {
+        "expression": {
+          "type": "Literal",
+          "value": {
+            "tenantId": "",
+            "provider": "default",
+            "type": "User",
+            "id": "1234567890"
+          }
+        },
+        "typeName": "Object"
+      },
+      "candidateUsers": {
+        "expression": {
+          "type": "Literal",
+          "value": [
+            {
+              "tenantId": "",
+              "provider": "default",
+              "type": "User",
+              "id": "1234567890"
+            }
+          ]
+        },
+        "typeName": "Object"
+      }
+    }
+  }
+}

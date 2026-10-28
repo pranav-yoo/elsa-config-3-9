@@ -10,19 +10,29 @@ dotnet build
 dotnet run --launch-profile http
 ```
 
-Open http://localhost:5000/swagger. Development defaults to `SwaggerPreview=true` (in-memory; restart clears state). Sample admin login is `admin` / `password`; all other sample accounts use `Password123!`. Development authentication is supplied by Elsa configuration providers reading `Samples/identity.json`; an admin password in user secrets does not change these sample account hashes.
+Open http://localhost:5000/swagger. Development now uses **PostgreSQL for Elsa Identity** (`Identity:UsePostgreSql=true`, `Identity:UseConfigurationProviders=false`). Native user/role API changes persist in `ilworkflow` and survive restart. Elsa seeds the `admin` account idempotently using `Identity:Admin:Password` (user secrets override the development default). Existing database admin passwords are not reset on startup.
+
+Workflow definitions, instances and tasks still use `SwaggerPreview=true` in-memory storage. Set `SwaggerPreview=false` to persist those too. John's external-token mapping remains in `Samples/external-users.json`; switching Elsa Identity storage does not copy external mappings or JSON fixture accounts into database users.
+
+Run `Setup.ps1` once if connection credentials or the stable Elsa token signing key are missing. Do not change signing keys on every startup.
 
 ## API walkthrough
 
-The API-only guide is [PDF](output/pdf/Elsa-3.9-Ticket-Workflow-API-Guide.pdf) or [Markdown](docs/TICKET-WALKTHROUGH.md). Reusable requests are in [Tickets.http](Tickets.http). Full captured requests/responses, with issued tokens and login passwords redacted, are in [api-captures.json](docs/api-captures.json).
+The API walkthrough is available in [Markdown](docs/TICKET-WALKTHROUGH.md). Reusable requests are in [Tickets.http](Tickets.http). Full captured requests/responses, with issued tokens and login passwords redacted, are in [api-captures.json](docs/api-captures.json).
 
 ### Ordered role/user setup and A-B-C-D requests
 
 - [Tickets.http](Tickets.http): the existing JSON accounts, in exact login/publish/submit/A/B/C/D/final-status/history order. Uses named responses to carry tokens, IDs and revisions automatically in VS Code REST Client.
-- [Identity-And-ABCD.http](Identity-And-ABCD.http): a complete native role/user creation sequence followed by the same workflow. Start with `dotnet run --launch-profile http -- --Identity:UseConfigurationProviders=false` and use a fresh disposable preview instance. Elsa bootstraps the administrator; then the collection creates five roles and nine users through native identity APIs. User IDs are generated and substituted into the literal configurationJson. Repeating creation on an existing store can conflict.
-- Both collections are also in `output/pdf/workflow-requests/`. Run one request at a time. After completion returns 202, retry the next task-list request if its items are still empty. Do not run the optional Reject alternatives after already approving those tasks.
+- [Identity-And-ABCD.http](Identity-And-ABCD.http): a complete native role/user creation sequence followed by the same workflow. Use a fresh research database for the first run. PostgreSQL identity mode is now the default; Elsa bootstraps the administrator; then the collection creates five roles and nine users through native identity APIs. User IDs are generated and substituted into the literal configurationJson. Repeating creation on an existing store can conflict.
+- Both collections are also in `output/documentation/workflow-requests/`. Run one request at a time. After completion returns 202, retry the next task-list request if its items are still empty. Do not run the optional Reject alternatives after already approving those tasks.
 
-The default `Identity:UseConfigurationProviders=true` preserves JSON fixture login. Native user/role creation writes to Elsa's store, so select the store-backed mode when those API-created identities must sign in. Ticket member/requester validation now uses the configured native `IUserProvider`, supporting either mode. Preview-mode store identities disappear on restart; this adds no persistence guarantee.
+The default PostgreSQL identity mode uses native `IUserProvider` and persists API-created accounts/roles. Use `Identity-And-ABCD.http` to create the accounts and use returned generated IDs in workflow definitions. `Tickets.http` targets the old fixed JSON fixture IDs and requires the optional sample mode:
+
+```powershell
+dotnet run --launch-profile http -- --Identity:UsePostgreSql=false --Identity:UseConfigurationProviders=true
+```
+
+Do not use the old JSON fixture IDs for newly API-created database accounts. John's external token continues to use its existing mapping and user ID.
 
 Verify either collection directly with `python Tests/VerifyHttpSequence.py Identity-And-ABCD.http --base-url http://localhost:5000` (or substitute Tickets.http). This executes only the main sequence, creates research data, and never prints issued tokens.
 
@@ -47,8 +57,18 @@ This creates research data and captures responses; use a disposable instance. Ve
 
 ## PostgreSQL and logs
 
-The host has PostgreSQL persistence configured for Elsa management/runtime/identity/UserTasks, database `ilworkflow`, host `localhost:5432`, username `postgres`. Use `Setup.ps1` or .NET user secrets for credentials/signing key, then set `SwaggerPreview=false`. Development checks/creates `ilworkflow` and Elsa runs migrations. Preview never connects to PostgreSQL.
+The host has PostgreSQL persistence configured for Elsa management/runtime/identity/UserTasks, database `ilworkflow`, host `localhost:5432`, username `postgres`. Use `Setup.ps1` or .NET user secrets for credentials/signing key, then set `SwaggerPreview=false`. Development checks/creates `ilworkflow` and Elsa runs migrations. Preview keeps workflow/task stores in memory, but PostgreSQL identity remains enabled by `Identity:UsePostgreSql=true`.
 
 The final restored version was verified in preview mode; PostgreSQL restart durability is not verified. The original service reported recovery mode. Separate stock Elsa 3.9 UserTasks PostgreSQL experiments found TagsJson mapping and nullable JSON read issues. Prior compatibility adapters were removed; do not assume those earlier patched persistence results apply to this version.
 
 Logs contain trace IDs, HTTP status/timing, sanitized database target, workflow ID, stage and visit; the request logger excludes bodies, query strings, passwords and bearer tokens. Swagger is Development-only. No frontend, attachments, notifications, automatic round robin or migration of existing old workflow instances is included.
+
+## Verify PostgreSQL identity across restart
+
+```powershell
+./Tests/IdentityPersistence.ps1
+# Restart the application, then:
+./Tests/IdentityPersistence.ps1 -Verify
+```
+
+This creates one research role/user and records their IDs in ignored `App_Data/identity-persistence-check.json`. The check verifies native user/role API results, role membership and password sign-in after restart; tokens are never logged. Verified against local PostgreSQL `ilworkflow` with Elsa's native identity migrations. John's development external token also returned HTTP 200 after the switch.

@@ -50,7 +50,7 @@ public sealed class TicketFlow : Activity
     {
         var configuration = ConfigurationJson.Get(context);
         var ticket = TicketJson.Read<TicketConfiguration>(configuration);
-        var users = context.GetRequiredService<IUserProvider>();
+        var users = context.GetRequiredService<TicketIdentity>();
         await TicketJson.ValidateConfigurationAsync(ticket, users, context.CancellationToken);
         var attributes = ticket.Definition.Attributes.ToDictionary(f => f.Key, f => JsonSerializer.SerializeToElement(context.WorkflowExecutionContext.Input.GetValueOrDefault(f.Key)));
         TicketJson.ValidateAttributes(ticket.Definition, attributes);
@@ -58,8 +58,7 @@ public sealed class TicketFlow : Activity
         var actor = context.GetRequiredService<IHttpContextAccessor>().HttpContext?.User;
         var actorId = actor?.FindFirstValue(ClaimTypes.NameIdentifier) ?? actor?.FindFirstValue("sub");
         TicketJson.Require(actor?.Identity?.IsAuthenticated == true && (actorId == requester || actor.IsInRole("admin")), "Submit only for your own user ID using synchronous execute.");
-        var requesterAccount = await users.FindAsync(new UserFilter { Id = requester }, context.CancellationToken);
-        TicketJson.Require(requesterAccount is not null && requesterAccount.Roles.Contains("Requester"), "Unknown requester.");
+        TicketJson.Require(await users.HasRoleAsync(requester, "Requester", context.CancellationToken), "Unknown requester.");
         context.SetProperty("configuration", configuration);
         context.SetProperty("attributes", TicketJson.Write(attributes));
         context.SetProperty("requester", requester);

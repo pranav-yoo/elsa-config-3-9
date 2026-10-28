@@ -18,7 +18,7 @@ This is the final **restored and tested application**, not the abandoned native-
 
 **Do not tell the receiving application that configurationJson is a built-in Elsa interpreter. It is our custom input and activity.** Merely posting this JSON to a plain Elsa server without registering the activity/form provider will not reproduce the behavior.
 
-The API-only PDF is [Elsa-3.9-Ticket-Workflow-API-Guide.pdf](Elsa-3.9-Ticket-Workflow-API-Guide.pdf). This Markdown additionally contains the configuration, source code, curl examples and receiving-agent implementation instructions.
+The API walkthrough is in docs/TICKET-WALKTHROUGH.md. This handoff contains the configuration, source code, curl examples and receiving-agent implementation instructions.
 
 ## 2. Exact business behavior
 
@@ -1981,7 +1981,6 @@ Write-Host "PASS: $($captures.Count) API responses captured; tokens redacted"
 - workflow-requests/Tickets.http: ordered default-fixture workflow.
 - workflow-requests/Identity-And-ABCD.http: native role/user creation and full A-B-C-D workflow; run in store-backed identity mode.
 - api-captures.json: all 148 original exchanges, authentication secrets redacted.
-- Elsa-3.9-Ticket-Workflow-API-Guide.pdf: API-only walkthrough.
 
 All essential source/configuration/request bodies are embedded in this Markdown, so it can be handed to another Codex on its own. Companion files make the curl examples easier to run. No real production secrets are included.
 

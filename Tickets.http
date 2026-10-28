@@ -1,3 +1,5 @@
+# JSON fixture account walkthrough: start with --Identity:UsePostgreSql=false --Identity:UseConfigurationProviders=true
+# Default application identity now uses PostgreSQL; fixture users are not automatically imported.
 # Expense Claim: existing JSON sample accounts; execute requests ONE AT A TIME in order.
 # VS Code REST Client extension: named responses supply tokens, IDs and revisions.
 # Do not use Send All: completion is asynchronous and optional branches must not run together.
