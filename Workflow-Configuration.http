@@ -1,0 +1,209 @@
+# Run requests ONE AT A TIME in VS Code REST Client, not Send All.
+# Named responses work within this file. Copy the required IDs between files.
+# Completion may return 202: retry the next GET until the next task appears.
+# A new action needs a new operationId; retry an old command with its ORIGINAL body/UUID/revision.
+@baseUrl = http://localhost:5000
+@adminPassword = password
+@samplePassword = Password123!
+# Provision using Authentication.http first; copy the generated IDs below.
+# Do not substitute usernames, task IDs or workflow instance IDs for these employee IDs.
+@aliceId = PASTE_ALICE_USER_ID
+@amyId = PASTE_AMY_USER_ID
+@bobId = PASTE_BOB_USER_ID
+@claraId = PASTE_CLARA_USER_ID
+@danId = PASTE_DAN_USER_ID
+
+### Login: configured-configurator
+# Use accessToken in Swagger without adding Bearer. Tokens expire; sign in again when needed.
+# @name configuratorLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "configured-configurator",
+  "password": "{{samplePassword}}"
+}
+
+
+### Create configuration + native Elsa draft
+# Missing/zero id creates. Response contains id, definitionId, definitionVersionId and revision. Conditions are ordered; the first match wins.
+# @name createConfiguration
+POST {{baseUrl}}/api/workflow-configurations
+Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "id": 0,
+  "configuration": {
+    "name": "Configured Expense Claim",
+    "attributes": [
+      {
+        "key": "firstName",
+        "type": "String",
+        "required": true,
+        "maxLength": 100
+      },
+      {
+        "key": "lastName",
+        "type": "String",
+        "required": true
+      },
+      {
+        "key": "claimAmount",
+        "type": "Decimal",
+        "required": true,
+        "minimum": 0
+      }
+    ],
+    "startStage": "A",
+    "stages": [
+      {
+        "key": "A",
+        "title": "A Initial review",
+        "assignment": {
+          "policy": "Bucket",
+          "members": [
+            "{{aliceId}}",
+            "{{amyId}}"
+          ]
+        },
+        "approveTo": {
+          "kind": "Stage",
+          "stageKey": "B"
+        },
+        "rejectTo": {
+          "kind": "Correction",
+          "stageKey": "A"
+        }
+      },
+      {
+        "key": "B",
+        "title": "B Claims review",
+        "assignment": {
+          "policy": "Bucket",
+          "members": [
+            "{{bobId}}"
+          ]
+        },
+        "approveTo": {
+          "kind": "Stage",
+          "stageKey": "D"
+        },
+        "rejectTo": {
+          "kind": "Stage",
+          "stageKey": "A"
+        },
+        "approveRules": [
+          {
+            "when": {
+              "attribute": "claimAmount",
+              "operator": "GreaterThan",
+              "value": 5000
+            },
+            "destination": {
+              "kind": "Stage",
+              "stageKey": "C"
+            }
+          }
+        ]
+      },
+      {
+        "key": "C",
+        "title": "C High-value approval",
+        "assignment": {
+          "policy": "Condition",
+          "members": [
+            "{{claraId}}"
+          ],
+          "rules": [
+            {
+              "when": {
+                "attribute": "claimAmount",
+                "operator": "GreaterThan",
+                "value": 5000
+              },
+              "userId": "{{claraId}}"
+            }
+          ]
+        },
+        "approveTo": {
+          "kind": "Stage",
+          "stageKey": "D"
+        },
+        "rejectTo": {
+          "kind": "Rejected"
+        }
+      },
+      {
+        "key": "D",
+        "title": "D Final approval",
+        "assignment": {
+          "policy": "Specific",
+          "members": [
+            "{{danId}}"
+          ],
+          "userId": "{{danId}}"
+        },
+        "approveTo": {
+          "kind": "Approved"
+        },
+        "rejectTo": {
+          "kind": "Correction",
+          "stageKey": "D"
+        }
+      }
+    ]
+  }
+}
+
+
+### Read draft
+# @name readConfiguration
+GET {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.id}}
+Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
+
+
+### Update same draft using POST
+# No PUT API. Missing positive id returns 404. Stale revision or editing a published version returns 409. Object references are intentionally unquoted JSON.
+# @name updateConfiguration
+POST {{baseUrl}}/api/workflow-configurations
+Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "id": {{readConfiguration.response.body.$.id}},
+  "expectedRevision": {{readConfiguration.response.body.$.revision}},
+  "configuration": {{readConfiguration.response.body.$.configuration}}
+}
+
+
+### Validate without publishing
+# 200 valid=true; FluentValidation failures return 400 with field/message errors.
+# @name validateConfiguration
+POST {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.id}}/validate
+Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{}
+
+
+### Publish exact Elsa version
+# Copy returned definitionId into Ticket-Workflow.http. This version is now immutable.
+# @name publishConfiguration
+POST {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.id}}/publish
+Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{"expectedRevision": {{updateConfiguration.response.body.$.revision}}}
+
+# END MAIN SEQUENCE
+
+### OPTIONAL next editable draft
+# Returns a NEW configuration id and Elsa version; edit that id with POST. Existing instances remain pinned to their original version.
+# @name nextDraft
+POST {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.id}}/next-draft
+Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{"expectedRevision": {{publishConfiguration.response.body.$.revision}}}
+

@@ -1,0 +1,347 @@
+# Run requests ONE AT A TIME in VS Code REST Client, not Send All.
+# Named responses work within this file. Copy the required IDs between files.
+# Completion may return 202: retry the next GET until the next task appears.
+# A new action needs a new operationId; retry an old command with its ORIGINAL body/UUID/revision.
+@baseUrl = http://localhost:5000
+@adminPassword = password
+@samplePassword = Password123!
+
+### Admin login
+# @name adminLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "{{adminPassword}}"
+}
+
+
+### Inspect existing roles
+# Inspect first. Skip provisioning POSTs below when the role/user already exists. Native list fields are roles/users, not items.
+# @name existingRoles
+GET {{baseUrl}}/elsa/api/identity/roles
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### Inspect existing users
+# Inspect first. Skip provisioning POSTs below when the role/user already exists. Native list fields are roles/users, not items.
+# @name existingUsers
+GET {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+
+
+### Create role Approver IF MISSING
+# Native Elsa API; run once. Do not recreate an existing role.
+# @name createRoleApprover
+POST {{baseUrl}}/elsa/api/identity/roles
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "id": "Approver",
+  "name": "Approver",
+  "permissions": [
+    "user-tasks:view",
+    "user-tasks:claim",
+    "user-tasks:complete",
+    "workflows/instances:view"
+  ]
+}
+
+
+### Create role Requester IF MISSING
+# Native Elsa API; run once. Do not recreate an existing role.
+# @name createRoleRequester
+POST {{baseUrl}}/elsa/api/identity/roles
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "id": "Requester",
+  "name": "Requester",
+  "permissions": [
+    "user-tasks:view",
+    "user-tasks:complete",
+    "workflows/definitions:view",
+    "workflows/definitions:execute",
+    "workflows/instances:view"
+  ]
+}
+
+
+### Create role Configurator IF MISSING
+# Native Elsa API; run once. Do not recreate an existing role.
+# @name createRoleConfigurator
+POST {{baseUrl}}/elsa/api/identity/roles
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "id": "Configurator",
+  "name": "Configurator",
+  "permissions": [
+    "workflows/definitions:*",
+    "workflows/instances:view"
+  ]
+}
+
+
+### Create role Supervisor IF MISSING
+# Native Elsa API; run once. Do not recreate an existing role.
+# @name createRoleSupervisor
+POST {{baseUrl}}/elsa/api/identity/roles
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "id": "Supervisor",
+  "name": "Supervisor",
+  "permissions": [
+    "user-tasks:view",
+    "user-tasks:assign",
+    "user-tasks:supervise",
+    "workflows/instances:view"
+  ]
+}
+
+
+### Create configured-requester IF MISSING
+# Elsa generates id. Copy the returned user id into Workflow-Configuration.http; a username is not the user ID.
+# @name createUserRequester
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "configured-requester",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Requester"
+  ]
+}
+
+
+### Create configured-alice IF MISSING
+# Elsa generates id. Copy the returned user id into Workflow-Configuration.http; a username is not the user ID.
+# @name createUserAlice
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "configured-alice",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Approver"
+  ]
+}
+
+
+### Create configured-amy IF MISSING
+# Elsa generates id. Copy the returned user id into Workflow-Configuration.http; a username is not the user ID.
+# @name createUserAmy
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "configured-amy",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Approver"
+  ]
+}
+
+
+### Create configured-bob IF MISSING
+# Elsa generates id. Copy the returned user id into Workflow-Configuration.http; a username is not the user ID.
+# @name createUserBob
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "configured-bob",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Approver"
+  ]
+}
+
+
+### Create configured-clara IF MISSING
+# Elsa generates id. Copy the returned user id into Workflow-Configuration.http; a username is not the user ID.
+# @name createUserClara
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "configured-clara",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Approver"
+  ]
+}
+
+
+### Create configured-dan IF MISSING
+# Elsa generates id. Copy the returned user id into Workflow-Configuration.http; a username is not the user ID.
+# @name createUserDan
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "configured-dan",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Approver"
+  ]
+}
+
+
+### Create configured-configurator IF MISSING
+# Elsa generates id. Copy the returned user id into Workflow-Configuration.http; a username is not the user ID.
+# @name createUserConfigurator
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "configured-configurator",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Configurator"
+  ]
+}
+
+
+### Create configured-supervisor IF MISSING
+# Elsa generates id. Copy the returned user id into Workflow-Configuration.http; a username is not the user ID.
+# @name createUserSupervisor
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "configured-supervisor",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Supervisor"
+  ]
+}
+
+
+### Create configured-outsider IF MISSING
+# Elsa generates id. Copy the returned user id into Workflow-Configuration.http; a username is not the user ID.
+# @name createUserOutsider
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "configured-outsider",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "Requester"
+  ]
+}
+
+
+### Login: configured-configurator
+# Use accessToken in Swagger without adding Bearer. Tokens expire; sign in again when needed.
+# @name configuratorLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "configured-configurator",
+  "password": "{{samplePassword}}"
+}
+
+
+### Login: configured-requester
+# Use accessToken in Swagger without adding Bearer. Tokens expire; sign in again when needed.
+# @name requesterLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "configured-requester",
+  "password": "{{samplePassword}}"
+}
+
+
+### Login: configured-alice
+# Use accessToken in Swagger without adding Bearer. Tokens expire; sign in again when needed.
+# @name aliceLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "configured-alice",
+  "password": "{{samplePassword}}"
+}
+
+
+### Login: configured-bob
+# Use accessToken in Swagger without adding Bearer. Tokens expire; sign in again when needed.
+# @name bobLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "configured-bob",
+  "password": "{{samplePassword}}"
+}
+
+
+### Login: configured-clara
+# Use accessToken in Swagger without adding Bearer. Tokens expire; sign in again when needed.
+# @name claraLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "configured-clara",
+  "password": "{{samplePassword}}"
+}
+
+
+### Login: configured-dan
+# Use accessToken in Swagger without adding Bearer. Tokens expire; sign in again when needed.
+# @name danLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "configured-dan",
+  "password": "{{samplePassword}}"
+}
+
+
+### Login: configured-supervisor
+# Use accessToken in Swagger without adding Bearer. Tokens expire; sign in again when needed.
+# @name supervisorLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "configured-supervisor",
+  "password": "{{samplePassword}}"
+}
+
+
+# OPTIONAL John external-token test. No Elsa password/login is needed for John.
+# Run pwsh -NoProfile -ExecutionPolicy Bypass -File ./New-TestAccessToken.ps1 -Provider Username -Identity john
+# Restart the app if the signing key is newly created. Paste the token, not its JSON payload.
+@johnToken = PASTE_GENERATED_TOKEN
+
+### John lists assigned tasks
+# Use External-Masters.http for GET member selection and an approval assigned to John. Copy participantId from the master, not the token sub or display name. No external registration POST/database is involved.
+# @name johnTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&status=Assigned
+Authorization: Bearer {{johnToken}}
+

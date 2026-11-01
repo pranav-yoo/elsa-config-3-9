@@ -1,0 +1,173 @@
+# GET-only external directory demo. No POST /api/external-members and no external-member DB.
+# Native Elsa still persists definitions, instances and User Tasks in PostgreSQL.
+# Run ONE REQUEST AT A TIME in VS Code REST Client. Keep the app in Development.
+# Generate the two tokens locally, then paste their output into the variables below:
+# pwsh -NoProfile -ExecutionPolicy Bypass -File ./New-TestAccessToken.ps1 -Provider Username -Identity john
+# pwsh -NoProfile -ExecutionPolicy Bypass -File ./New-TestAccessToken.ps1 -Provider Email -Identity john@example.test
+# Restart the app if the script creates a new signing key. Tokens expire in 30 minutes.
+@baseUrl = http://localhost:5000
+@adminPassword = password
+@usernameJohnToken = PASTE_USERNAME_PROVIDER_TOKEN
+@emailJohnToken = PASTE_EMAIL_PROVIDER_TOKEN
+
+### 1. Local administrator configures the workflow; external employee needs no Elsa password.
+# @name masterAdmin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{ "username": "admin", "password": "{{adminPassword}}" }
+
+### 2. Configurator selects the provider. Response exposes the configured claim/field names.
+# @name providers
+GET {{baseUrl}}/api/external-providers
+Authorization: Bearer {{masterAdmin.response.body.$.accessToken}}
+
+### 3. Username master returns five hardcoded members. John is items[0].
+# Example: id=U001, username=john, participantId=external:username-demo:U001.
+# @name usernameMembers
+GET {{baseUrl}}/api/external-providers/username-demo/members
+Authorization: Bearer {{masterAdmin.response.body.$.accessToken}}
+
+### 4. Email master is a separate provider, even for the same display name.
+# Example: id=E001, email=john@example.test, participantId=external:email-demo:E001.
+# @name emailMembers
+GET {{baseUrl}}/api/external-providers/email-demo/members
+Authorization: Bearer {{masterAdmin.response.body.$.accessToken}}
+
+### 5. The raw demo master is also GET-only; no authentication needed for fictional demo data.
+# @name rawUsernames
+GET {{baseUrl}}/api/demo-masters/usernames
+
+### 6. Second raw master returns five email-based records.
+# @name rawEmails
+GET {{baseUrl}}/api/demo-masters/emails
+
+### 7. Save a one-stage draft. Use participantId directly; no registration request.
+# id=0 creates; a positive id updates an unpublished draft with expectedRevision.
+# Both members and userId contain the same eligible owner for Specific assignment.
+# @name usernameDraft
+POST {{baseUrl}}/api/workflow-configurations
+Authorization: Bearer {{masterAdmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "id": 0,
+  "configuration": {
+    "name": "Username John approval",
+    "attributes": [{ "key": "claimAmount", "type": "Decimal", "required": true, "minimum": 0 }],
+    "startStage": "A",
+    "stages": [{
+      "key": "A",
+      "title": "John approval",
+      "assignment": {
+        "policy": "Specific",
+        "members": ["{{usernameMembers.response.body.$.items[0].participantId}}"],
+        "userId": "{{usernameMembers.response.body.$.items[0].participantId}}"
+      },
+      "approveTo": { "kind": "Approved" },
+      "rejectTo": { "kind": "Rejected" }
+    }]
+  }
+}
+
+### 8. Publish the generated native Elsa definition.
+# @name usernamePublished
+POST {{baseUrl}}/api/workflow-configurations/{{usernameDraft.response.body.$.id}}/publish
+Authorization: Bearer {{masterAdmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{ "expectedRevision": {{usernameDraft.response.body.$.revision}} }
+
+### 9. An INTERNAL user starts the workflow. John participates only as the task approver.
+# For this demo use the internal admin token; a local Requester token can be used instead.
+# @name usernameRun
+POST {{baseUrl}}/elsa/api/workflow-definitions/{{usernamePublished.response.body.$.definitionId}}/execute
+Authorization: Bearer {{masterAdmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{ "correlationId": "MASTER-{{$guid}}", "input": { "attributes": { "claimAmount": 6000 } } }
+
+### 10. Specific assignment is already owned; use scope=assigned, not available.
+# @name usernameTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&status=Assigned&workflowInstanceId={{usernameRun.response.body.$.workflowState.id}}
+Authorization: Bearer {{usernameJohnToken}}
+
+### 11. Approve via native User Tasks. 202 means accepted: poll the next GET.
+# expectedRevision must match the latest task revision.
+# operationId identifies ONE command: save and reuse its original UUID/body for retries.
+# @name usernameComplete
+POST {{baseUrl}}/elsa/api/user-tasks/{{usernameTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{usernameJohnToken}}
+Content-Type: application/json
+
+{ "expectedRevision": {{usernameTasks.response.body.$.items[0].revision}}, "operationId": "{{$guid}}", "actionKey": "Approve", "data": {} }
+
+### 12. Read the result. workflowState.output.ticketOutcome becomes Approved.
+# @name usernameFinished
+GET {{baseUrl}}/elsa/api/workflow-instances/{{usernameRun.response.body.$.workflowState.id}}
+Authorization: Bearer {{usernameJohnToken}}
+
+### 13. Separate email-provider workflow. A username-provider token cannot own this John's work.
+# @name emailDraft
+POST {{baseUrl}}/api/workflow-configurations
+Authorization: Bearer {{masterAdmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "id": 0,
+  "configuration": {
+    "name": "Email John approval",
+    "attributes": [{ "key": "claimAmount", "type": "Decimal", "required": true }],
+    "startStage": "A",
+    "stages": [{
+      "key": "A",
+      "title": "Email John approval",
+      "assignment": {
+        "policy": "Specific",
+        "members": ["{{emailMembers.response.body.$.items[0].participantId}}"],
+        "userId": "{{emailMembers.response.body.$.items[0].participantId}}"
+      },
+      "approveTo": { "kind": "Approved" },
+      "rejectTo": { "kind": "Rejected" }
+    }]
+  }
+}
+
+### 14. Publish the email-provider definition.
+# @name emailPublished
+POST {{baseUrl}}/api/workflow-configurations/{{emailDraft.response.body.$.id}}/publish
+Authorization: Bearer {{masterAdmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{ "expectedRevision": {{emailDraft.response.body.$.revision}} }
+
+### 15. The INTERNAL user also starts this instance; email John only handles its approval task.
+# @name emailRun
+POST {{baseUrl}}/elsa/api/workflow-definitions/{{emailPublished.response.body.$.definitionId}}/execute
+Authorization: Bearer {{masterAdmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{ "correlationId": "EMAIL-{{$guid}}", "input": { "attributes": { "claimAmount": 4000 } } }
+
+### 16. Read the assigned task/revision.
+# @name emailTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&status=Assigned&workflowInstanceId={{emailRun.response.body.$.workflowState.id}}
+Authorization: Bearer {{emailJohnToken}}
+
+### 17. Demonstrate rejection. A reason is required; native completion returns 202.
+# @name emailComplete
+POST {{baseUrl}}/elsa/api/user-tasks/{{emailTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{emailJohnToken}}
+Content-Type: application/json
+
+{ "expectedRevision": {{emailTasks.response.body.$.items[0].revision}}, "operationId": "{{$guid}}", "actionKey": "Reject", "data": { "reason": "Not approved in this demonstration" } }
+
+### 18. Poll until workflowState.output.ticketOutcome becomes Rejected.
+# @name emailFinished
+GET {{baseUrl}}/elsa/api/workflow-instances/{{emailRun.response.body.$.workflowState.id}}
+Authorization: Bearer {{emailJohnToken}}
+
+# END MAIN SEQUENCE
+# Optional isolation check BEFORE completing step 17: use usernameJohnToken for the email task.
+# Its assigned-task list is empty; direct access/completion is denied (403/404).
+# GETs never create native users. Local roles/users remain managed by Authentication.http.

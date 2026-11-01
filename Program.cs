@@ -1,4 +1,10 @@
 using System.Diagnostics;
+using IlWorkflow.Api.Configuration;
+using IlWorkflow.Api.Persistence;
+using IlWorkflow.Api.Hosting;
+using IlWorkflow.Api.Workflows;
+using Microsoft.EntityFrameworkCore;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Elsa.Extensions;
 using Elsa.Persistence.EFCore.Extensions;
@@ -17,6 +23,11 @@ using Elsa.UserTasks.Persistence.EFCore.PostgreSql.Extensions;
 using IlWorkflow.Api.Tickets;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Configuration.AddJsonFile("Samples/external-providers.json", optional: false);
+builder.Configuration.AddJsonFile("appsettings.json", optional: false);
+builder.Configuration.AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true);
+if (builder.Environment.IsDevelopment()) builder.Configuration.AddUserSecrets<Program>();
+builder.Configuration.AddEnvironmentVariables().AddCommandLine(args);
 var useConfigurationIdentity = builder.Environment.IsDevelopment() && builder.Configuration.GetValue("Identity:UseConfigurationProviders", true);
 if (useConfigurationIdentity) builder.Configuration.AddJsonFile("Samples/identity.json", optional: false, reloadOnChange: true);
 var configuration = builder.Configuration;
@@ -40,6 +51,8 @@ builder.Services.AddElsa(elsa =>
                 identity.UseConfigurationBasedUserProvider(options => configuration.GetSection("Identity").Bind(options));
                 identity.UseConfigurationBasedRoleProvider(options => configuration.GetSection("Identity").Bind(options));
             }
+            // Identity persistence stores local users, password hashes, roles and grants.
+            // User Tasks persistence below stores work items; it is not the user account store.
             if (!swaggerPreview) identity.UseEntityFrameworkCore(ef => ef.UsePostgreSql(connectionString));
             if (!useConfigurationIdentity) identity.UseDefaultAdmin(admin => admin
                 .WithAdminUserName(configuration["Identity:Admin:UserName"] ?? "admin")
@@ -52,12 +65,15 @@ builder.Services.AddElsa(elsa =>
         .UseWorkflowsApi()
         .UseUserTasks(tasks =>
         {
+            // Native tasks, candidate snapshots, operations and audit events survive restart.
+            // Task assignees reference the stable user ID supplied by Elsa Identity/external authentication.
             if (!swaggerPreview) tasks.UseEntityFrameworkCore(ef => ef.UsePostgreSql(connectionString));
         })
         .UseFlowchart(flowchart => flowchart.UseTokenBasedExecution())
         .UseJavaScript()
         .AddActivitiesFrom<UserTask>()
         .AddActivitiesFrom<TicketFlow>()
+        .AddActivitiesFrom<TicketReview>()
         .UseHttp(http => http.ConfigureHttpOptions = options => configuration.GetSection("Http").Bind(options))
         ;
     if (builder.Environment.IsDevelopment())
@@ -67,7 +83,7 @@ builder.Services.AddElsa(elsa =>
 // Elsa 3.9 defaults capture the root provider; both services resolve scoped runtime/mediator services.
 builder.Services.AddScoped<IUserTaskNotificationSink, DefaultUserTaskNotificationSink>();
 builder.Services.AddScoped<IUserTaskWorkflowResumer, DefaultUserTaskWorkflowResumer>();
-builder.Services.AddSingleton<IUserTaskFormProvider, TicketFormProvider>();
+builder.Services.AddSingleton<IUserTaskFormProvider, IlWorkflow.Api.Tickets.TicketFormProvider>();
 // Development accounts come from Elsa's configuration providers, rather than store seeding.
 if (useConfigurationIdentity)
     builder.Services.Configure<Elsa.Identity.Options.DefaultAdminUserOptions>(options =>
@@ -80,6 +96,25 @@ if (useConfigurationIdentity)
 
 
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddCompanyAuthentication(configuration, builder.Environment);
+builder.Services.AddScoped<TicketIdentity>();
+if (!swaggerPreview)
+{
+    builder.Services.AddScoped<Elsa.Persistence.EFCore.IEntityModelCreatingHandler, UserTaskPostgreSqlModel>();
+    builder.Services.AddScoped<IUserTaskRepository, UserTaskNullableJsonRepository>();
+}
+builder.Services.AddDbContext<ApplicationDbContext>(options => options.UseNpgsql(connectionString,
+    provider => provider.MigrationsHistoryTable("__EFMigrationsHistory", "Application")));
+builder.Services.AddControllers().AddJsonOptions(options =>
+    options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter(allowIntegerValues: false)));
+builder.Services.AddScoped<WorkflowConfigurationValidator>();
+builder.Services.AddScoped<WorkflowConfigurationService>();
+builder.Services.AddSingleton<WorkflowDefinitionBuilder>();
+builder.Services.AddScoped<AssignmentResolver>();
+builder.Services.AddScoped<WorkflowAccessService>();
+builder.Services.AddSingleton<IUserTaskFormProvider, IlWorkflow.Api.Workflows.TicketFormProvider>();
+builder.Services.AddAuthorization(options => options.AddPolicy("WorkflowConfigurator", policy =>
+    policy.RequireAuthenticatedUser().RequireAssertion(context => ConfigurationAccess.IsConfigurator(context.User))));
 
 builder.Logging.AddSimpleConsole(options =>
 {
@@ -173,11 +208,20 @@ app.Use(async (context, next) =>
             app.Logger.LogWarning("403: Request denied by authorization. Authenticated={Authenticated}; check the account permissions.", context.User.Identity?.IsAuthenticated == true);
     }
 });
+// Apply application migrations without touching Elsa's separate migration histories.
+// Preview is documentation-only and must work while PostgreSQL is unavailable.
+if (!swaggerPreview)
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    await scope.ServiceProvider.GetRequiredService<ApplicationDbContext>().Database.MigrateAsync();
+}
+app.MapControllers();
 app.MapWorkflowsApi();
 
 app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseMiddleware<WorkflowRequestGuard>();
 app.UseWorkflows();
 if (app.Environment.IsDevelopment())
 {

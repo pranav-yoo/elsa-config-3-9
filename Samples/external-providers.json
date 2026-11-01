@@ -1,0 +1,39 @@
+{
+  "ExternalAuth": {
+    "DevelopmentTokens": {
+      "Enabled": false
+    },
+    "Providers": [
+      {
+        "id": "username-demo",
+        "displayName": "Username master",
+        "enabled": true,
+        "master": "Username",
+        "issuer": "ilworkflow-demo-usernames",
+        "audience": "ilworkflow-api",
+        "matchClaim": "name",
+        "memberField": "username",
+        "ignoreCase": true
+      },
+      {
+        "id": "email-demo",
+        "displayName": "Email master",
+        "enabled": true,
+        "master": "Email",
+        "issuer": "ilworkflow-demo-emails",
+        "audience": "ilworkflow-api",
+        "matchClaim": "email",
+        "memberField": "email",
+        "ignoreCase": true
+      }
+    ],
+    "RolePermissions": {
+      "Approver": [
+        "user-tasks:view",
+        "user-tasks:claim",
+        "user-tasks:complete",
+        "workflows/instances:view"
+      ]
+    }
+  }
+}

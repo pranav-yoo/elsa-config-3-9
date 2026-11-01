@@ -1,0 +1,321 @@
+# Run requests ONE AT A TIME in VS Code REST Client, not Send All.
+# Named responses work within this file. Copy the required IDs between files.
+# Completion may return 202: retry the next GET until the next task appears.
+# A new action needs a new operationId; retry an old command with its ORIGINAL body/UUID/revision.
+@baseUrl = http://localhost:5000
+@adminPassword = password
+@samplePassword = Password123!
+# Paste the published definitionId from Workflow-Configuration.http.
+# Main sequence: 6000 -> A -> B -> C -> D -> Approved.
+# To test 4000 or 5000, change claimAmount and SKIP all C requests.
+@definitionId = PASTE_PUBLISHED_DEFINITION_ID
+
+### Login: configured-requester
+# Use accessToken in Swagger without adding Bearer. Tokens expire; sign in again when needed.
+# @name requesterLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "configured-requester",
+  "password": "{{samplePassword}}"
+}
+
+
+### Login: configured-alice
+# Use accessToken in Swagger without adding Bearer. Tokens expire; sign in again when needed.
+# @name aliceLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "configured-alice",
+  "password": "{{samplePassword}}"
+}
+
+
+### Login: configured-bob
+# Use accessToken in Swagger without adding Bearer. Tokens expire; sign in again when needed.
+# @name bobLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "configured-bob",
+  "password": "{{samplePassword}}"
+}
+
+
+### Login: configured-clara
+# Use accessToken in Swagger without adding Bearer. Tokens expire; sign in again when needed.
+# @name claraLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "configured-clara",
+  "password": "{{samplePassword}}"
+}
+
+
+### Login: configured-dan
+# Use accessToken in Swagger without adding Bearer. Tokens expire; sign in again when needed.
+# @name danLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "configured-dan",
+  "password": "{{samplePassword}}"
+}
+
+
+### Login: configured-supervisor
+# Use accessToken in Swagger without adding Bearer. Tokens expire; sign in again when needed.
+# @name supervisorLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{
+  "username": "configured-supervisor",
+  "password": "{{samplePassword}}"
+}
+
+
+### Submit through native Elsa execute
+# Expect workflowState.subStatus=Suspended. Requester is derived from your token. No /api/tickets endpoint exists.
+# @name startTicket
+POST {{baseUrl}}/elsa/api/workflow-definitions/{{definitionId}}/execute
+Authorization: Bearer {{requesterLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "correlationId": "CLAIM-{{$guid}}",
+  "input": {
+    "attributes": {
+      "firstName": "Pranav",
+      "lastName": "Shah",
+      "claimAmount": 6000
+    }
+  }
+}
+
+
+### A: find current task
+# Wait/retry until items is nonempty. Every stage/visit has a NEW task ID.
+# @name aTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=available&status=Available&workflowInstanceId={{startTicket.response.body.$.workflowState.id}}&includeTotalCount=true
+Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
+
+
+### A: claim ownership
+# Native Elsa enforces one owner and revision conflicts.
+# @name aClaim
+POST {{baseUrl}}/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}/claim
+Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{"expectedRevision": {{aTasks.response.body.$.items[0].revision}}, "operationId": "{{$guid}}"}
+
+
+### A: read latest revision
+# @name aDetail
+GET {{baseUrl}}/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}
+Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
+
+
+### A: approve
+# May return 202 accepted/completing. Direct native API calls still pass through our FluentValidation form provider.
+# @name aApprove
+POST {{baseUrl}}/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{"expectedRevision": {{aDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "Approve", "data": {"comment": "A reviewed"}}
+
+
+### B: find current task
+# Wait/retry until items is nonempty. Every stage/visit has a NEW task ID.
+# @name bTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=available&status=Available&workflowInstanceId={{startTicket.response.body.$.workflowState.id}}&includeTotalCount=true
+Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
+
+
+### B: claim ownership
+# Native Elsa enforces one owner and revision conflicts.
+# @name bClaim
+POST {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}/claim
+Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{"expectedRevision": {{bTasks.response.body.$.items[0].revision}}, "operationId": "{{$guid}}"}
+
+
+### B: read latest revision
+# @name bDetail
+GET {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}
+Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
+
+
+### B: approve
+# May return 202 accepted/completing. Direct native API calls still pass through our FluentValidation form provider.
+# @name bApprove
+POST {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{"expectedRevision": {{bDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "Approve", "data": {"comment": "B reviewed"}}
+
+
+### C: find current task
+# Wait/retry until items is nonempty. Every stage/visit has a NEW task ID.
+# @name cTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&status=Assigned&workflowInstanceId={{startTicket.response.body.$.workflowState.id}}&includeTotalCount=true
+Authorization: Bearer {{claraLogin.response.body.$.accessToken}}
+
+
+### C: read latest revision
+# @name cDetail
+GET {{baseUrl}}/elsa/api/user-tasks/{{cTasks.response.body.$.items[0].id}}
+Authorization: Bearer {{claraLogin.response.body.$.accessToken}}
+
+
+### C: approve
+# May return 202 accepted/completing. Direct native API calls still pass through our FluentValidation form provider.
+# @name cApprove
+POST {{baseUrl}}/elsa/api/user-tasks/{{cTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{claraLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{"expectedRevision": {{cDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "Approve", "data": {"comment": "C reviewed"}}
+
+
+### D: find current task
+# Wait/retry until items is nonempty. Every stage/visit has a NEW task ID.
+# @name dTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&status=Assigned&workflowInstanceId={{startTicket.response.body.$.workflowState.id}}&includeTotalCount=true
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
+
+
+### D: read latest revision
+# @name dDetail
+GET {{baseUrl}}/elsa/api/user-tasks/{{dTasks.response.body.$.items[0].id}}
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
+
+
+### D: approve
+# May return 202 accepted/completing. Direct native API calls still pass through our FluentValidation form provider.
+# @name dApprove
+POST {{baseUrl}}/elsa/api/user-tasks/{{dTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{"expectedRevision": {{dDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "Approve", "data": {"comment": "D reviewed"}}
+
+
+### Read final instance
+# Poll until status and subStatus are Finished. workflowState.output.ticketOutcome=Approved. Faulted/Cancelled are technical states, not rejection.
+# @name finishedInstance
+GET {{baseUrl}}/elsa/api/workflow-instances/{{startTicket.response.body.$.workflowState.id}}
+Authorization: Bearer {{requesterLogin.response.body.$.accessToken}}
+
+
+### Read workflow journey
+# @name journey
+GET {{baseUrl}}/elsa/api/workflow-instances/{{startTicket.response.body.$.workflowState.id}}/journal
+Authorization: Bearer {{requesterLogin.response.body.$.accessToken}}
+
+
+### Read stage A task audit
+# @name taskEvents
+GET {{baseUrl}}/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}/events
+Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
+
+# END MAIN SEQUENCE
+# ALTERNATIVES: use INSTEAD of that stage Approve on a fresh instance. Do not run all branches together.
+
+### INSTEAD reject A -> correction then A
+# Read current revision first. A nonblank reason is mandatory. Earlier decisions remain in history.
+# @name rejectA
+POST {{baseUrl}}/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{"expectedRevision": {{aDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "Reject", "data": {"reason": "Please correct this request"}}
+
+
+### INSTEAD reject B -> new A task
+# Read current revision first. A nonblank reason is mandatory. Earlier decisions remain in history.
+# @name rejectB
+POST {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{"expectedRevision": {{bDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "Reject", "data": {"reason": "Please correct this request"}}
+
+
+### INSTEAD reject C -> terminal Rejected
+# Read current revision first. A nonblank reason is mandatory. Earlier decisions remain in history.
+# @name rejectC
+POST {{baseUrl}}/elsa/api/user-tasks/{{cTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{claraLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{"expectedRevision": {{cDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "Reject", "data": {"reason": "Please correct this request"}}
+
+
+### INSTEAD reject D -> correction then D
+# Read current revision first. A nonblank reason is mandatory. Earlier decisions remain in history.
+# @name rejectD
+POST {{baseUrl}}/elsa/api/user-tasks/{{dTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{"expectedRevision": {{dDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "Reject", "data": {"reason": "Please correct this request"}}
+
+
+### After A/D rejection: find requester correction
+# @name correctionTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&status=Assigned&workflowInstanceId={{startTicket.response.body.$.workflowState.id}}
+Authorization: Bearer {{requesterLogin.response.body.$.accessToken}}
+
+
+### Resubmit corrected attributes
+# Same instance; attributeRevision increments. Supply the COMPLETE object. This fixture returns A to A and D to D. Repeat the applicable stage requests.
+# @name resubmit
+POST {{baseUrl}}/elsa/api/user-tasks/{{correctionTasks.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{requesterLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{correctionTasks.response.body.$.items[0].revision}},
+  "operationId": "{{$guid}}",
+  "actionKey": "Resubmit",
+  "data": {"attributes": {"firstName": "Pranav", "lastName": "Shah", "claimAmount": 4000}}
+}
+
+
+# OPTIONAL supervisor reassignment for a task with no eligible initial assignee.
+@blockedTaskId = PASTE_UNASSIGNED_TASK_ID
+@eligibleUserId = PASTE_ELIGIBLE_APPROVER_ID
+@blockedRevision = 1
+
+### Supervisor finds unassigned work
+# @name blockedTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=all&status=Unassigned
+Authorization: Bearer {{supervisorLogin.response.body.$.accessToken}}
+
+
+### Supervisor assigns work
+# Read task detail for the current revision. Native Elsa requires supervisor and assignment permissions.
+# @name reassign
+POST {{baseUrl}}/elsa/api/user-tasks/{{blockedTaskId}}/assign
+Authorization: Bearer {{supervisorLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "expectedRevision": {{blockedRevision}},
+  "operationId": "{{$guid}}",
+  "assignee": {"kind": "user", "provider": "default", "id": "{{eligibleUserId}}"}
+}
+
