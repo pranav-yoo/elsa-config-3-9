@@ -8,8 +8,8 @@ param(
     [string]$ClaimName
 )
 $ErrorActionPreference = 'Stop'
-$projectPath = Join-Path $PSScriptRoot 'IlWorkflow.Api.csproj'
-$providerSettings = Get-Content (Join-Path $PSScriptRoot 'Samples/external-providers.json') -Raw | ConvertFrom-Json
+$projectPath = Join-Path $PSScriptRoot 'ilworkflow.API/ilworkflow.API.csproj'
+$providerSettings = Get-Content (Join-Path $PSScriptRoot 'ilworkflow.API/Samples/external-providers.json') -Raw | ConvertFrom-Json
 $profile = @($providerSettings.ExternalAuth.Providers | Where-Object { $_.master -eq $Provider })
 if ($profile.Count -ne 1) { throw 'Expected one configured demo profile for this master.' }
 $profile = $profile[0]

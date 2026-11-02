@@ -15,7 +15,7 @@ foreach ($user in @('admin','configurator','requester','alice','amy','bella','bo
     if (-not $login.accessToken) {throw "Native configuration login failed for $user"}
     $tokens[$user] = $login.accessToken
 }
-$definition = Get-Content "$PSScriptRoot/../Samples/Definitions/expense-claim-native.definition.json" -Raw | ConvertFrom-Json
+$definition = Get-Content "$PSScriptRoot/../ilworkflow.API/Samples/Definitions/expense-claim-native.definition.json" -Raw | ConvertFrom-Json
 $allowed = @('Elsa.Flowchart','Elsa.SetVariable','Elsa.FlowDecision','Elsa.UserTask')
 if (@($definition.model.root.activities | Where-Object {$_.type -notin $allowed}).Count) {throw 'Definition contains a custom activity'}
 Call '' GET '/elsa/api/user-tasks' $null @(401) | Out-Null

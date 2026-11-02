@@ -37,24 +37,24 @@ Approver token
 
 | File | Entry points | Why this code exists |
 |---|---|---|
-| Configuration/WorkflowConfigurationController.cs | Save, Get, Validate, Publish, NextDraft | Conventional controller; HTTP binding, authorization and responses only. POST implements create/update. |
-| Configuration/WorkflowConfigurationService.cs | SaveAsync, PublishAsync, CreateNextDraftAsync, ApplySetup | Coordinate our schema snapshot with native Elsa version lifecycle; never manage task claims. |
-| Configuration/WorkflowConfiguration.cs | records/enums/JSON settings | Define the supported configuration vocabulary; reject unknown enum values rather than accept arbitrary strings or script source. |
-| Configuration/WorkflowConfigurationValidators.cs | WorkflowConfigurationValidator, TicketInputValidator, AttributeRules | Centralize field validation, eligibility, typed conditions and graph checks using FluentValidation. |
-| Persistence/ApplicationDbContext.cs | model mapping and explicit migration | Store only JSONB configuration linked to exact Elsa version IDs, using a separate schema and migration history. |
-| Workflows/WorkflowDefinitionBuilder.cs | Build | Compile configuration into a native flowchart; native FlowDecision nodes read persisted typed comparison results. |
-| Workflows/TicketReview.cs | InitializeTicket, TicketReview, FinishTicket | Thin typed integration activities around native human tasks; own no task table or claim state. |
-| Workflows/AssignmentResolver.cs | ResolveAsync | Select eligible candidates/initial owner from supported policies; Elsa owns the resulting assignment. |
-| Workflows/TicketFormProvider.cs | ResolveAsync, ValidateAndNormalizeAsync | Make validation unavoidable even when a client calls native Elsa complete directly. |
-| Hosting/WorkflowRequestGuard.cs | InvokeAsync | Protect existing Elsa routes; it is middleware, not an endpoint/controller. |
-| Hosting/WorkflowAccessService.cs | CanReadInstanceAsync | Restrict native instance reads to requester, participating workers or supervisors. |
-| Hosting/ConfigurationAccess.cs | permission helpers | Match Elsa permission grants, including wildcard grants. |
-| Tickets/TicketIdentity.cs | HasRoleAsync | Resolve roles through native identity/configured external directory references without creating duplicate passwords. |
-| ExternalIdentity/DemoMemberDirectory.cs | Members, FindByClaim, FindByParticipantId | Shared hardcoded master data, provider settings validation and deterministic participant IDs; no member database or loopback HTTP. |
-| ExternalIdentity/DemoMasterController.cs | Usernames, Emails | Two Development-only GET APIs, five fictional members each. |
-| ExternalIdentity/ExternalProvidersController.cs | Get, Members | Configurator's provider/member selection; copy the returned participantId directly into a stage. |
-| Hosting/CompanyAuthentication.cs | AddCompanyAuthentication, OnTokenValidated | Select the trusted provider handler, validate JWT and normalize its matching member into Elsa's participant identity. |
-| Persistence/UserTaskPostgreSqlCompatibility.cs | model handler and repository decorator | Correct two verified 3.9 provider edge cases without replacing Elsa task operations. |
+| ilworkflow.API/Controllers/WorkflowConfigurationController.cs | Save, Get, Validate, Publish, NextDraft | Conventional controller; HTTP binding, authorization and responses only. POST implements create/update. |
+| ilworkflow.Infrastructure/Configuration/WorkflowConfigurationService.cs | SaveAsync, PublishAsync, CreateNextDraftAsync, ApplySetup | Coordinate our schema snapshot with native Elsa version lifecycle; never manage task claims. |
+| ilworkflow.Domain/WorkflowConfiguration.cs | records/enums/JSON settings | Define the supported configuration vocabulary; reject unknown enum values rather than accept arbitrary strings or script source. |
+| ilworkflow.Application/WorkflowConfigurationValidators.cs | WorkflowConfigurationValidator, TicketInputValidator, AttributeRules | Centralize field validation, eligibility, typed conditions and graph checks using FluentValidation. |
+| ilworkflow.Infrastructure/Persistence/ApplicationDbContext.cs | model mapping and explicit migration | Store only JSONB configuration linked to exact Elsa version IDs, using a separate schema and migration history. |
+| ilworkflow.Infrastructure/Workflows/WorkflowDefinitionBuilder.cs | Build | Compile configuration into a native flowchart; native FlowDecision nodes read persisted typed comparison results. |
+| ilworkflow.Infrastructure/Workflows/TicketReview.cs | InitializeTicket, TicketReview, FinishTicket | Thin typed integration activities around native human tasks; own no task table or claim state. |
+| ilworkflow.Application/AssignmentResolver.cs | ResolveAsync | Select eligible candidates/initial owner from supported policies; Elsa owns the resulting assignment. |
+| ilworkflow.Infrastructure/Workflows/TicketFormProvider.cs | ResolveAsync, ValidateAndNormalizeAsync | Make validation unavoidable even when a client calls native Elsa complete directly. |
+| ilworkflow.API/Middleware/WorkflowRequestGuard.cs | InvokeAsync | Protect existing Elsa routes; it is middleware, not an endpoint/controller. |
+| ilworkflow.Infrastructure/Authorization/WorkflowAccessService.cs | CanReadInstanceAsync | Restrict native instance reads to requester, participating workers or supervisors. |
+| ilworkflow.Infrastructure/Authorization/ConfigurationAccess.cs | permission helpers | Match Elsa permission grants, including wildcard grants. |
+| ilworkflow.Infrastructure/Tickets/TicketIdentity.cs | HasRoleAsync | Resolve roles through native identity/configured external directory references without creating duplicate passwords. |
+| ilworkflow.Infrastructure/ExternalIdentity/DemoMemberDirectory.cs | Members, FindByClaim, FindByParticipantId | Shared hardcoded master data, provider settings validation and deterministic participant IDs; no member database or loopback HTTP. |
+| ilworkflow.API/Controllers/DemoMasterController.cs | Usernames, Emails | Two Development-only GET APIs, five fictional members each. |
+| ilworkflow.API/Controllers/ExternalProvidersController.cs | Get, Members | Configurator's provider/member selection; copy the returned participantId directly into a stage. |
+| ilworkflow.Infrastructure/Authentication/CompanyAuthentication.cs | AddCompanyAuthentication, OnTokenValidated | Select the trusted provider handler, validate JWT and normalize its matching member into Elsa's participant identity. |
+| ilworkflow.Infrastructure/Persistence/UserTaskPostgreSqlCompatibility.cs | model handler and repository decorator | Correct two verified 3.9 provider edge cases without replacing Elsa task operations. |
 | Program.cs | DI, middleware order and migrations | Compose native stores and register our small integration pieces. |
 
 ## Identifiers are different things
@@ -133,7 +133,7 @@ There is deliberately no `POST /api/external-members`, external-member EF entity
 
 Both providers can be enabled simultaneously. `external:username-demo:U001` and `external:email-demo:E001` are separate Johns; equal names never link accounts. Do not change provider/master IDs after assigning work: these are stable references in persisted Elsa history. Old tasks referencing the previous static John ID are left intact and require explicit supervisor reassignment if needed.
 
-`Samples/external-providers.json` holds profile settings; development signing keys remain in user secrets. Example mappings are `name -> username` and `email -> email`. To use another payload field, set `matchClaim` to its claim name; choose a supported authoritative `memberField` (`id`, `username`, `email` or `displayName`) that is available and uniquely identifies a member. FluentValidation checks provider settings on startup. Directory matching rejects multiple matches rather than choosing the first record.
+`ilworkflow.API/Samples/external-providers.json` holds profile settings; development signing keys remain in user secrets. Example mappings are `name -> username` and `email -> email`. To use another payload field, set `matchClaim` to its claim name; choose a supported authoritative `memberField` (`id`, `username`, `email` or `displayName`) that is available and uniquely identifies a member. FluentValidation checks provider settings on startup. Directory matching rejects multiple matches rather than choosing the first record.
 
 All hardcoded master members can participate as approvers, subject to each task's eligibility and ownership checks. Internal users configure workflows and submit tickets; external employees enter the process only after an instance exists. No Requester, workflow-execution, configuration or administrator permissions are granted through these demos. Outside Development the demo directory and its JWT handlers are disabled; GET demo masters return 404. Replace this fake source and development trust with real provider adapters before deploying external authentication.
 

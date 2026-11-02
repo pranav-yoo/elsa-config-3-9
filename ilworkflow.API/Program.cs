@@ -1,0 +1,151 @@
+using System.Diagnostics;
+using Elsa.Extensions;
+using IlWorkflow.API.Services;
+using IlWorkflow.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
+using Npgsql;
+
+var builder = WebApplication.CreateBuilder(args);
+builder.Configuration.AddJsonFile("Samples/external-providers.json", optional: false);
+builder.Configuration.AddJsonFile("appsettings.json", optional: false);
+builder.Configuration.AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true);
+if (builder.Environment.IsDevelopment()) builder.Configuration.AddUserSecrets<Program>();
+builder.Configuration.AddEnvironmentVariables().AddCommandLine(args);
+var useConfigurationIdentity = builder.Environment.IsDevelopment() && builder.Configuration.GetValue("Identity:UseConfigurationProviders", true);
+if (useConfigurationIdentity) builder.Configuration.AddJsonFile("Samples/identity.json", optional: false, reloadOnChange: true);
+var configuration = builder.Configuration;
+var swaggerPreview = builder.Environment.IsDevelopment() && configuration.GetValue<bool>("SwaggerPreview");
+var connectionString = configuration.GetConnectionString("Elsa")!;
+var signingKey = configuration["Identity:Tokens:SigningKey"];
+if (swaggerPreview && string.IsNullOrWhiteSpace(signingKey))
+    configuration["Identity:Tokens:SigningKey"] = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(48));
+if (!swaggerPreview && (string.IsNullOrWhiteSpace(signingKey) || signingKey.Length < 32))
+    throw new InvalidOperationException("Set Identity:Tokens:SigningKey to a random secret of at least 32 characters using dotnet user-secrets.");
+if (!swaggerPreview && string.IsNullOrWhiteSpace(configuration["Identity:Admin:Password"]))
+    throw new InvalidOperationException("Set Identity:Admin:Password using dotnet user-secrets.");
+
+builder.Services.AddWorkflowServices(configuration, builder.Environment, swaggerPreview, useConfigurationIdentity);
+
+builder.Logging.AddSimpleConsole(options =>
+{
+    options.TimestampFormat = "HH:mm:ss ";
+    options.IncludeScopes = true;
+});
+builder.Services.PostConfigureAll<JwtBearerOptions>(options =>
+{
+    var previous = options.Events.OnAuthenticationFailed;
+    options.Events.OnAuthenticationFailed = async context =>
+    {
+        var logger = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Authentication");
+        logger.LogWarning("Bearer authentication failed: {FailureType}. Sign in again and use the accessToken in Swagger Authorize. TraceId={TraceId}",
+            context.Exception.GetType().Name, context.HttpContext.TraceIdentifier);
+        if (previous is not null) await previous(context);
+    };
+});
+
+var app = builder.Build();
+app.UseExceptionHandler(errors => errors.Run(async context =>
+{
+    context.Response.StatusCode = 500;
+    context.Response.Headers["X-Trace-Id"] = context.TraceIdentifier;
+    await context.Response.WriteAsJsonAsync(new { Code = "internal_error", Message = "An unexpected error occurred. Check server logs using the trace ID.", TraceId = context.TraceIdentifier });
+}));
+app.Logger.LogInformation("Storage mode: {StorageMode}", swaggerPreview ? "Swagger preview (in memory)" : "PostgreSQL");
+var databaseSettings = new NpgsqlConnectionStringBuilder(connectionString);
+app.Logger.LogInformation("Database configured: Host={Host}; Port={Port}; Database={Database}; Username={Username}; SSL={SslMode}. Credentials omitted.",
+    databaseSettings.Host, databaseSettings.Port, databaseSettings.Database, databaseSettings.Username, databaseSettings.SslMode);
+if (swaggerPreview)
+{
+    app.Logger.LogInformation("SwaggerPreview=true: PostgreSQL connections and migrations are skipped. Set SwaggerPreview=false to enable database persistence.");
+}
+else if (app.Environment.IsDevelopment())
+{
+    if (databaseSettings.Database != "ilworkflow")
+        throw new InvalidOperationException("Development database creation is restricted to ilworkflow.");
+    var started = Stopwatch.GetTimestamp();
+    try
+    {
+        var maintenance = new NpgsqlConnectionStringBuilder(connectionString) { Database = "postgres" };
+        app.Logger.LogInformation("Opening PostgreSQL maintenance connection to check database {Database}", databaseSettings.Database);
+        await using var connection = new NpgsqlConnection(maintenance.ConnectionString);
+        await connection.OpenAsync();
+        app.Logger.LogInformation("PostgreSQL connection established in {ElapsedMs:F1} ms", Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+        await using var exists = new NpgsqlCommand("SELECT 1 FROM pg_database WHERE datname = @name", connection);
+        exists.Parameters.AddWithValue("name", databaseSettings.Database);
+        if (await exists.ExecuteScalarAsync() is null)
+        {
+            app.Logger.LogInformation("Creating database ilworkflow");
+            await using var create = new NpgsqlCommand("CREATE DATABASE ilworkflow", connection);
+            try { await create.ExecuteNonQueryAsync(); }
+            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.DuplicateDatabase)
+            { app.Logger.LogInformation("Database ilworkflow was created by another process"); }
+        }
+        else app.Logger.LogInformation("Database ilworkflow already exists");
+        app.Logger.LogInformation("Database initialization complete. Elsa will apply management and runtime migrations during startup.");
+    }
+    catch (Exception exception)
+    {
+        app.Logger.LogError("PostgreSQL initialization failed: {FailureType}; SQLSTATE={SqlState}; Host={Host}; Port={Port}; Database={Database}. Check PostgreSQL readiness, credentials and database permissions.",
+            exception.GetType().Name, (exception as PostgresException)?.SqlState, databaseSettings.Host, databaseSettings.Port, databaseSettings.Database);
+        throw;
+    }
+}
+app.Lifetime.ApplicationStarted.Register(() => app.Logger.LogInformation("Application ready. Storage mode: {StorageMode}", swaggerPreview ? "in memory" : "PostgreSQL; Elsa startup migrations completed"));
+
+app.Use(async (context, next) =>
+{
+    var started = Stopwatch.GetTimestamp();
+    using var scope = app.Logger.BeginScope("TraceId={TraceId}", context.TraceIdentifier);
+    context.Response.Headers["X-Trace-Id"] = context.TraceIdentifier;
+    try
+    {
+        await next(context);
+    }
+    catch (Exception exception)
+    {
+        if (!context.Response.HasStarted) context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        app.Logger.LogError(exception, "Unhandled error for {Method} {Path}", context.Request.Method, context.Request.Path);
+        throw;
+    }
+    finally
+    {
+        app.Logger.LogInformation("{Method} {Path} => {StatusCode} in {ElapsedMs:F1} ms",
+            context.Request.Method, context.Request.Path, context.Response.StatusCode, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+        if (context.Response.StatusCode == StatusCodes.Status401Unauthorized)
+            app.Logger.LogWarning("401: Authorization header present={HeaderPresent}. POST /elsa/api/identity/login, then paste accessToken into Swagger Authorize (JWT bearer field). Tokens from a different signing key or expired tokens must be replaced.",
+                context.Request.Headers.ContainsKey("Authorization"));
+        if (context.Response.StatusCode == StatusCodes.Status403Forbidden)
+            app.Logger.LogWarning("403: Request denied by authorization. Authenticated={Authenticated}; check the account permissions.", context.User.Identity?.IsAuthenticated == true);
+    }
+});
+// Apply application migrations without touching Elsa's separate migration histories.
+// Preview is documentation-only and must work while PostgreSQL is unavailable.
+if (!swaggerPreview)
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    await scope.ServiceProvider.GetRequiredService<ApplicationDbContext>().Database.MigrateAsync();
+}
+app.MapControllers();
+app.MapWorkflowsApi();
+
+app.UseRouting();
+app.UseAuthentication();
+app.UseAuthorization();
+app.UseMiddleware<WorkflowRequestGuard>();
+app.UseWorkflows();
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwaggerUI();
+    app.MapGet("/", () => Results.Redirect("/swagger"));
+}
+await app.RunAsync();
+
+
+
+
+
+
+
+
+

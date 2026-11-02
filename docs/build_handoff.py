@@ -82,9 +82,9 @@ Important details:
 | Tickets/TicketFlow.cs | Custom configuration interpreter; schedules native UserTask and chooses next stage |
 | Tickets/TicketConfiguration.cs | Configuration records, attribute/type/condition/configuration validation |
 | Tickets/TicketFormProvider.cs | Native IUserTaskFormProvider implementation for review/correction submissions |
-| Samples/identity.json | Development-only sample users and native roles/permissions |
-| Samples/expense-claim.configuration.json | Readable business configuration |
-| Samples/Definitions/expense-claim.definition.json | Complete POST body with escaped literal configurationJson |
+| ilworkflow.API/Samples/identity.json | Development-only sample users and native roles/permissions |
+| ilworkflow.API/Samples/expense-claim.configuration.json | Readable business configuration |
+| ilworkflow.API/Samples/Definitions/expense-claim.definition.json | Complete POST body with escaped literal configurationJson |
 | Tickets.http | Reusable native API requests |
 | Identity-And-ABCD.http | Native role/user creation, then ordered A-B-C-D with generated IDs |
 | Tests/ConfigurationApi.ps1 | Verified approval/rejection/correction/access test suite |
@@ -96,7 +96,7 @@ The native-only experiment `expense-claim-native-v1` and `Tests/TicketApi.ps1` a
 
 In the source application:
 ''')
-command('dotnet restore\ndotnet build\ndotnet run --launch-profile http')
+command('dotnet restore\ndotnet build\ndotnet run --project ilworkflow.API --launch-profile http')
 text('''Swagger: `http://localhost:5000/swagger`. OpenAPI: `http://localhost:5000/swagger/v3/swagger.json`.
 
 Development defaults to `SwaggerPreview=true`. It skips PostgreSQL connections/migrations and uses in-memory stores. Restart clears definitions, instances and tasks. Re-publish the definition after restart.
@@ -120,14 +120,14 @@ Supported attribute types: string, decimal, integer, boolean, date (`yyyy-MM-dd`
 
 `members` contains user IDs, not actual directory groups. The sample validates candidates through native IUserProvider with the Approver role. The selected provider can be configuration-backed (default) or store-backed (API-managed accounts). External group membership and disabled-account enforcement still need receiving-app integration.
 ''')
-file_block('Samples/expense-claim.configuration.json','json')
+file_block('ilworkflow.API/Samples/expense-claim.configuration.json','json')
 text('''## 6. Exact definition publication JSON
 
 Save this as `expense-claim.definition.json`, or use the provided companion file in workflow-requests.
 
 Keep this exact input pattern: `configurationJson.expression.type` is `Literal`, `configurationJson.typeName` is `String`, and `configurationJson.expression.value` is an **escaped JSON string**, not an object. Root type is `Tickets.TicketFlow`.
 ''')
-file_block('Samples/Definitions/expense-claim.definition.json','json')
+file_block('ilworkflow.API/Samples/Definitions/expense-claim.definition.json','json')
 text('''To change configuration safely, serialize the readable JSON into the literal string. Never concatenate or hand-escape it. Also update `model.inputs` when adding/removing attribute definitions; the current sample does not automatically generate input declarations.
 ''')
 command('''$definition = Get-Content ./expense-claim.definition.json -Raw | ConvertFrom-Json
@@ -298,7 +298,7 @@ text('''The host adds X-Trace-Id to responses. Logs include method/path/status/d
 
 The source registers all Elsa packages at 3.9.0. Copy only packages needed by the receiving app; preserve its existing target/framework unless incompatible. This sample host additionally enables native JavaScript/Flowchart for the separate native-only experiment; the configuration interpreter below does not depend on those expressions for its routing.
 ''')
-file_block('IlWorkflow.Api.csproj','xml')
+file_block('ilworkflow.API/ilworkflow.API.csproj','xml')
 block('''using Elsa.Extensions;
 using Elsa.UserTasks.Activities;
 using Elsa.UserTasks.Contracts;
@@ -409,21 +409,21 @@ Use `Tests/ConfigurationApi.ps1` as the starting API suite. It creates disposabl
 
 ## Appendix A. Ticket configuration models and rules (exact source)
 ''')
-file_block('Tickets/TicketConfiguration.cs','csharp')
+file_block('ilworkflow.Infrastructure/Tickets/TicketConfiguration.cs','csharp')
 text('## Appendix B. TicketFlow activity (exact source)')
-file_block('Tickets/TicketFlow.cs','csharp')
+file_block('ilworkflow.Infrastructure/Tickets/TicketFlow.cs','csharp')
 text('## Appendix C. Form provider (exact source)')
-file_block('Tickets/TicketFormProvider.cs','csharp')
+file_block('ilworkflow.Infrastructure/Tickets/TicketFormProvider.cs','csharp')
 text('''## Appendix D. Research host reference (exact source)
 
 Reference only: merge the necessary registrations into the receiving host. Do not overwrite its authentication or database setup with this entire file.
 ''')
-file_block('Program.cs','csharp')
+file_block('ilworkflow.API/Program.cs','csharp')
 text('''## Appendix E. Development identity fixture
 
 Only for an isolated research host. These are sample password hashes for the documented development credentials. Prefer the receiving application's identity system in an existing app. Preserve native permission checks; merely adding a role name without its Elsa permissions is not sufficient.
 ''')
-file_block('Samples/identity.json','json')
+file_block('ilworkflow.API/Samples/identity.json','json')
 text('## Appendix F. Exact reusable HTTP request collection')
 file_block('Tickets.http','http')
 text('''## Appendix G. Exact API verification script
@@ -448,7 +448,7 @@ text('''## Appendix H. Role/user API setup and full A-B-C-D HTTP sequence
 This is a second, optional identity mode. Start a fresh research instance with:
 
 ```powershell
-dotnet run --launch-profile http -- --Identity:UseConfigurationProviders=false
+dotnet run --project ilworkflow.API --launch-profile http -- --Identity:UseConfigurationProviders=false
 ```
 
 The native administrator is bootstrapped at startup. Then run the requests below one at a time in VS Code REST Client. Named responses substitute generated user IDs, tokens, task IDs and current revisions. Do not run Reject alternatives after the completed approval path. Store-backed preview data is still ephemeral. The five role creations, nine user creations, generated-ID workflow and all four approvals were verified through 47 actual HTTP requests.
@@ -456,7 +456,7 @@ The native administrator is bootstrapped at startup. Then run the requests below
 file_block('Identity-And-ABCD.http','http')
 path=out/'ELSA-WORKFLOW-CODEX-HANDOFF.md'
 path.write_text('\n\n'.join(parts)+'\n',encoding='utf-8')
-for source,name in [('Samples/Definitions/expense-claim.definition.json','expense-claim.definition.json'),('Samples/expense-claim.configuration.json','expense-claim.configuration.json')]:
+for source,name in [('ilworkflow.API/Samples/Definitions/expense-claim.definition.json','expense-claim.definition.json'),('ilworkflow.API/Samples/expense-claim.configuration.json','expense-claim.configuration.json')]:
     shutil.copyfile(root/source,requests/name)
 (requests/'submit.json').write_text(json.dumps(submission,indent=2)+'\n',encoding='utf-8')
 for user in ('admin','configurator','requester','alice','amy','bella','bob','clara','dan','supervisor'):

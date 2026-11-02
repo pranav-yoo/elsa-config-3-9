@@ -13,7 +13,7 @@ $secrets = @{
     'Identity:Admin:Password' = $adminPlain
     'Identity:Tokens:SigningKey' = [Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(48))
 }
-$secrets | ConvertTo-Json -Compress | dotnet user-secrets set --project "$PSScriptRoot/IlWorkflow.Api.csproj"
+$secrets | ConvertTo-Json -Compress | dotnet user-secrets set --project "$PSScriptRoot/ilworkflow.API/ilworkflow.API.csproj"
 if ($LASTEXITCODE -ne 0) { throw 'Could not save user secrets.' }
-Write-Host 'Configuration saved. Run: dotnet run --launch-profile http'
+Write-Host 'Configuration saved. Run: dotnet run --project ilworkflow.API --launch-profile http'
 

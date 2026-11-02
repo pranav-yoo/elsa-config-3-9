@@ -12,7 +12,7 @@ parser.add_argument('--verify-restart', action='store_true')
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 state_file = root / 'App_Data/demo-master-check.json'
-secret_output = subprocess.check_output(['dotnet', 'user-secrets', 'list', '--json', '--project', str(root / 'IlWorkflow.Api.csproj')], text=True)
+secret_output = subprocess.check_output(['dotnet', 'user-secrets', 'list', '--json', '--project', str(root / 'ilworkflow.API/ilworkflow.API.csproj')], text=True)
 # The .NET CLI surrounds JSON with //BEGIN and //END markers.
 secrets = json.loads('\n'.join(line for line in secret_output.splitlines() if not line.lstrip().startswith('//')))
 key = secrets['ExternalAuth:DevelopmentTokens:SigningKey'].encode()

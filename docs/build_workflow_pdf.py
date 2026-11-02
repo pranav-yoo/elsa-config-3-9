@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'output/pdf'
 OUT.mkdir(parents=True, exist_ok=True)
 captures = json.loads((ROOT / 'docs/api-captures.json').read_text(encoding='utf-8-sig'))
-definition = json.loads((ROOT / 'Samples/Definitions/expense-claim.definition.json').read_text(encoding='utf-8-sig'))
+definition = json.loads((ROOT / 'ilworkflow.API/Samples/Definitions/expense-claim.definition.json').read_text(encoding='utf-8-sig'))
 configuration = json.loads(definition['model']['root']['configurationJson']['expression']['value'])
 
 styles = getSampleStyleSheet()
@@ -203,7 +203,7 @@ sub('Repeat the checks')
 code('./Tests/ConfigurationApi.ps1 -BaseUrl http://localhost:5000','powershell')
 p('The test creates sample definitions and workflow instances in the target environment. Run it only against a disposable research instance. Full request/response bodies, apart from authentication redaction, are in docs/api-captures.json. The PDF uses explicitly labeled excerpts for readability.')
 sub('Full requests and responses')
-p('See docs/api-captures.json for complete captured exchanges and Tickets.http for reusable requests. The publication body is Samples/Definitions/expense-claim.definition.json. The PDF uses labeled response excerpts for readability; dynamic IDs, revisions and timestamps differ on your server.')
+p('See docs/api-captures.json for complete captured exchanges and Tickets.http for reusable requests. The publication body is ilworkflow.API/Samples/Definitions/expense-claim.definition.json. The PDF uses labeled response excerpts for readability; dynamic IDs, revisions and timestamps differ on your server.')
 
 def chrome(canvas, doc):
     width,height=doc.pagesize

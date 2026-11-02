@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-identity = json.loads((ROOT/'Samples/identity.json').read_text())['Identity']
-base_definition = json.loads((ROOT/'Samples/Definitions/expense-claim.definition.json').read_text(encoding='utf-8-sig'))
+identity = json.loads((ROOT/'ilworkflow.API/Samples/identity.json').read_text())['Identity']
+base_definition = json.loads((ROOT/'ilworkflow.API/Samples/Definitions/expense-claim.definition.json').read_text(encoding='utf-8-sig'))
 users = ['configurator','requester','alice','amy','bella','bob','clara','dan','supervisor']
 
 def ref(request, path): return '{{'+request+'.response.body.$.'+path+'}}'
@@ -41,7 +41,7 @@ def build(api):
 ''')
     if api:
         chunks.append('''# REQUIRED API-IDENTITY MODE (leave the default JSON fixture mode unchanged):
-# dotnet run --launch-profile http -- --Identity:UseConfigurationProviders=false
+# dotnet run --project ilworkflow.API --launch-profile http -- --Identity:UseConfigurationProviders=false
 # In preview this creates an in-memory admin; all API-created accounts disappear on restart.
 # On a fresh server, admin is bootstrapped by Elsa. No anonymous create-admin endpoint exists.
 # Use the configured admin password. Create roles/users once; do not rerun POST setup blindly.
@@ -50,7 +50,7 @@ def build(api):
 ''')
     else:
         chunks.append('''# DEFAULT MODE: Identity:UseConfigurationProviders=true (current default).
-# These users/roles already exist in Samples/identity.json; do not POST-create them again.
+# These users/roles already exist in ilworkflow.API/Samples/identity.json; do not POST-create them again.
 # For ALL role/user creation requests followed by the same A-B-C-D flow,
 # use Identity-And-ABCD.http with its documented store-backed startup switch.
 # Sample user IDs equal names in this mode only.

@@ -24,7 +24,7 @@ foreach($user in @('admin','configurator','requester','alice','amy','bella','bob
     if(-not $login.accessToken){throw "Login failed: $user"}
     $tokens[$user]=$login.accessToken
 }
-$definition=Get-Content "$PSScriptRoot/../Samples/Definitions/expense-claim.definition.json" -Raw | ConvertFrom-Json
+$definition=Get-Content "$PSScriptRoot/../ilworkflow.API/Samples/Definitions/expense-claim.definition.json" -Raw | ConvertFrom-Json
 if($definition.model.root.configurationJson.expression.type -ne 'Literal' -or $definition.model.root.configurationJson.typeName -ne 'String'){throw 'configurationJson must be a literal string'}
 Call '' GET '/elsa/api/user-tasks' $null @(401) 'Unauthenticated tasks rejected' | Out-Null
 Call 'requester' POST '/elsa/api/workflow-definitions' $definition @(403) 'Requester cannot publish' | Out-Null

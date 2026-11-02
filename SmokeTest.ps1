@@ -16,7 +16,7 @@ $login = Invoke-RestMethod "$BaseUrl/elsa/api/identity/login" -Method Post -Cont
 if (-not $login.accessToken) { throw 'Login failed.' }
 $headers = @{ Authorization = "Bearer $($login.accessToken)" }
 Invoke-RestMethod "$BaseUrl/elsa/api/workflow-definitions" -Headers $headers | Out-Null
-$definition = Get-Content "$PSScriptRoot/Samples/Definitions/expense-claim.definition.json" -Raw
+$definition = Get-Content "$PSScriptRoot/ilworkflow.API/Samples/Definitions/expense-claim.definition.json" -Raw
 Invoke-RestMethod "$BaseUrl/elsa/api/workflow-definitions" -Headers $headers -Method Post -ContentType 'application/json' -Body $definition | Out-Null
 $submission = @{ correlationId = "SMOKE-$([guid]::NewGuid())"; input = @{ requesterId = 'requester'; firstName = 'Pranav'; lastName = 'Shah'; claimAmount = 6000 } } | ConvertTo-Json
 $result = Invoke-RestMethod "$BaseUrl/elsa/api/workflow-definitions/expense-claim-v1/execute" -Headers $headers -Method Post -ContentType 'application/json' -Body $submission
