@@ -5,12 +5,19 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace IlWorkflow.Infrastructure.Persistence;
 
-/// <summary>Application-owned configuration only. Elsa owns its own contexts and migrations.</summary>
+/// <summary>Application-owned configuration and attribute masters. Elsa owns its own contexts and migrations.</summary>
 public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : DbContext(options)
 {
     public DbSet<WorkflowConfiguration> WorkflowConfigurations => Set<WorkflowConfiguration>();
+    public DbSet<WorkflowAttribute> WorkflowAttributes => Set<WorkflowAttribute>();
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        var attribute = modelBuilder.Entity<WorkflowAttribute>();
+        attribute.ToTable("WorkflowAttributes", "Application");
+        attribute.HasKey(x => x.Id);
+        attribute.Property(x => x.Status).HasConversion<string>();
+        attribute.Property(x => x.Type).HasConversion<string>();
+        attribute.HasIndex(x => new { x.DefinitionId, x.Key }).IsUnique();
         var row = modelBuilder.Entity<WorkflowConfiguration>();
         row.ToTable("WorkflowConfigurations", "Application");
         row.HasKey(x => x.Id);

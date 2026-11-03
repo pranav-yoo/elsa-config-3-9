@@ -24,19 +24,40 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
     {
         if (request.Id is < 0) throw new ApiException(400, "ID cannot be negative.");
         if (request.Configuration is null) throw new ApiException(400, "Configuration is required.");
-        await validator.ValidateAndThrowAsync(request.Configuration, ct);
+        if (request.DefinitionId is not null) await new DefinitionIdValidator().ValidateAndThrowAsync(request.DefinitionId, ct);
+        // Named definitions use the preconfigured active field master, never client-supplied attributes.
+        // Old callers without definition_id retain their existing inline-schema contract.
+        var setup = request.Configuration;
+        if (request.DefinitionId is not null)
+            setup = setup with { Attributes = await ActiveAttributesAsync(request.DefinitionId, ct) };
+        if (request.Id is > 0 && request.DefinitionId is null)
+        {
+            var current = await GetAsync(request.Id.Value, ct);
+            if (current.UsesAttributeCatalog) setup = setup with { Attributes = await ActiveAttributesAsync(current.DefinitionId, ct) };
+        }
+        await validator.ValidateAndThrowAsync(setup, ct);
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         WorkflowConfiguration row;
         WorkflowDefinition definition;
         if (request.Id is null or 0)
         {
-            definition = await publisher.NewAsync(cancellationToken: ct);
-            row = new() { DefinitionId = definition.DefinitionId, DefinitionVersionId = definition.Id, DefinitionVersion = definition.Version };
+            if (request.DefinitionId is not null)
+            {
+                await LockAsync(request.DefinitionId, ct);
+                if (await definitions.FindAsync(new WorkflowDefinitionFilter { DefinitionId = request.DefinitionId, VersionOptions = VersionOptions.Latest }, ct) is not null)
+                    throw new ApiException(409, "Definition ID already exists. Update its draft or create its next version.");
+                definition = await publisher.NewAsync(cancellationToken: ct);
+                definition.DefinitionId = request.DefinitionId;
+            }
+            else definition = await publisher.NewAsync(cancellationToken: ct);
+            row = new() { DefinitionId = definition.DefinitionId, DefinitionVersionId = definition.Id, DefinitionVersion = definition.Version, UsesAttributeCatalog = request.DefinitionId is not null };
             db.WorkflowConfigurations.Add(row);
         }
         else
         {
             row = await GetAsync(request.Id.Value, ct);
+            if (request.DefinitionId is not null && request.DefinitionId != row.DefinitionId)
+                throw new ApiException(400, "Definition ID cannot be changed on an existing configuration.");
             await LockAsync(row.DefinitionId, ct);
             await db.Entry(row).ReloadAsync(ct);
             CheckRevision(row, request.ExpectedRevision);
@@ -45,9 +66,9 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
             if (definition.IsPublished) throw new ApiException(409, "Elsa version is already published.");
             row.Revision++;
         }
-        row.ConfigurationJson = ConfigurationJson.Write(request.Configuration);
+        row.ConfigurationJson = ConfigurationJson.Write(setup);
         row.Ready = false;
-        ApplySetup(definition, request.Configuration);
+        ApplySetup(definition, setup);
         await publisher.SaveDraftAsync(definition, ct);
         row.DefinitionVersion = definition.Version;
         var storedDefinition = await definitions.FindAsync(new WorkflowDefinitionFilter { Id = definition.Id }, ct);
@@ -56,6 +77,10 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
         await transaction.CommitAsync(ct);
         return row;
     }
+    private async Task<AttributeDefinition[]> ActiveAttributesAsync(string definitionId, CancellationToken ct) =>
+        (await db.WorkflowAttributes.AsNoTracking().Where(x => x.DefinitionId == definitionId && x.Status == AttributeStatus.Active)
+            .OrderBy(x => x.Id).ToArrayAsync(ct)).Select(x => x.ToDefinition()).ToArray();
+
     public async Task ValidateAsync(long id, CancellationToken ct) => await validator.ValidateAndThrowAsync(ConfigurationJson.Read<WorkflowSetup>((await GetAsync(id, ct)).ConfigurationJson), ct);
 
     /// <summary>Ready is committed only after native publication succeeds. Failed partial publication cannot execute.</summary>
@@ -96,11 +121,14 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
         var draft = await publisher.GetDraftAsync(source.DefinitionId, VersionOptions.Published, ct) ?? throw new ApiException(409, "Published definition is missing.");
         // Clone the active published native version, even when the requested source snapshot is historical.
         // Rebuild from that source's configuration so its schema and generated graph remain aligned.
-        ApplySetup(draft, ConfigurationJson.Read<WorkflowSetup>(source.ConfigurationJson));
+        var setup = ConfigurationJson.Read<WorkflowSetup>(source.ConfigurationJson);
+        if (source.UsesAttributeCatalog) setup = setup with { Attributes = await ActiveAttributesAsync(source.DefinitionId, ct) };
+        await validator.ValidateAndThrowAsync(setup, ct);
+        ApplySetup(draft, setup);
         await publisher.SaveDraftAsync(draft, ct);
         var storedDraft = await definitions.FindAsync(new WorkflowDefinitionFilter { Id = draft.Id }, ct);
         var row = new WorkflowConfiguration { DefinitionId = draft.DefinitionId, DefinitionVersionId = draft.Id,
-            DefinitionVersion = draft.Version, ConfigurationJson = source.ConfigurationJson, DefinitionHash = Hash(storedDraft!.StringData ?? "") };
+            DefinitionVersion = draft.Version, ConfigurationJson = ConfigurationJson.Write(setup), UsesAttributeCatalog = source.UsesAttributeCatalog, DefinitionHash = Hash(storedDraft!.StringData ?? "") };
         db.WorkflowConfigurations.Add(row);
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);

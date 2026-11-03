@@ -36,6 +36,17 @@ Run requests one at a time; use named responses within a file and copy marked ID
 2. [Workflow-Configuration.http](Workflow-Configuration.http): create/update draft, validate, publish and create next version.
 3. [Ticket-Workflow.http](Ticket-Workflow.http): internal submission, A/B/C/D approvals, rejection/correction, history and reassignment.
 4. [External-Masters.http](External-Masters.http): GET provider/member selection, internal submission and external approvals using both providers.
+5. [Attribute-Catalog.http](Attribute-Catalog.http): configure fields first, then create a workflow with your own `definition_id`.
+
+### Definition IDs and preconfigured attributes
+
+`POST /api/workflow-attributes` creates a master field (missing/zero `id`) or updates one (positive `id`). Each row belongs to a `definitionId` and has `status: Active` or `Inactive`. `GET /api/workflow-attributes?definitionId=expense-claim-v1` lists that family's master records.
+
+Pass `definition_id` in `POST /api/workflow-configurations` to create Elsa's workflow with that exact ID. Inline `configuration.attributes` may be omitted and are ignored for this path: the server loads only Active rows from `Application.WorkflowAttributes` for that ID. An existing ID returns 409; use the existing configuration ID or next-draft API for edits/versions. Definition IDs cannot change on updates.
+
+Catalog-backed draft edits and next-draft creation reload active fields even when an update omits `definition_id`. Publishing freezes the saved draft snapshot; later master changes do not alter published versions or running instances. References to inactive/missing fields in conditions fail FluentValidation. Existing clients that never supplied `definition_id` retain the inline-attribute contract.
+
+The attribute table and catalog-source flag are installed by migration `202611020001_WorkflowAttributes` on persistent startup. Run `python Tests/AttributeCatalog.py --base-url http://localhost:5000` to verify the named-definition flow and native approval.
 
 POST /api/workflow-configurations creates for absent/null/zero id; positive IDs update drafts with expectedRevision. Published snapshots are immutable. Stale revisions return 409; unknown positive IDs return 404. Execution, tasks, instances and history use native Elsa APIs. No custom PUT or /api/tickets endpoint exists.
 
@@ -51,7 +62,7 @@ Internal users configure/publish/start instances. External employees receive App
 
 ## Persistence and verification
 
-Elsa Identity EF stores accounts/roles. Management/runtime stores definitions/instances/bookmarks. User Tasks EF stores tasks, candidates, revisions and events. Application EF stores only version-linked configuration in its existing Application schema. The instance ID is the ticket reference; attributes/history/outcomes remain in Elsa.
+Elsa Identity EF stores accounts/roles. Management/runtime stores definitions/instances/bookmarks. User Tasks EF stores tasks, candidates, revisions and events. Application EF stores version-linked configuration and the preconfigured field master in its existing Application schema. The instance ID is the ticket reference; submitted attribute values/history/outcomes remain in Elsa.
 
 Migration IDs, schemas and persisted activity identities are preserved. Existing immutable definitions require a new version to receive changed graph generation. Keep the native 3.9 PostgreSQL compatibility fixes; keyword task search returns explanatory 400, while scope/status/instance/reference filters remain available.
 

@@ -2,7 +2,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 namespace IlWorkflow.Application.Configuration;
 
-public sealed record SaveConfigurationRequest(long? Id, long? ExpectedRevision, WorkflowSetup Configuration);
+public sealed record SaveConfigurationRequest(long? Id, long? ExpectedRevision, WorkflowSetup Configuration,
+    [property: JsonPropertyName("definition_id")] string? DefinitionId = null);
 public sealed record RevisionRequest(long ExpectedRevision);
 
 public static class ConfigurationJson
@@ -34,4 +35,11 @@ public interface IWorkflowConfigurationService
     Task ValidateAsync(long id, CancellationToken ct);
     Task<WorkflowConfiguration> PublishAsync(long id, long expectedRevision, CancellationToken ct);
     Task<WorkflowConfiguration> CreateNextDraftAsync(long id, long expectedRevision, CancellationToken ct);
+}
+
+public sealed record SaveWorkflowAttributeRequest(long? Id, string DefinitionId, AttributeDefinition Attribute, AttributeStatus Status = AttributeStatus.Active);
+public interface IWorkflowAttributeService
+{
+    Task<WorkflowAttribute> SaveAsync(SaveWorkflowAttributeRequest request, CancellationToken ct);
+    Task<IReadOnlyList<WorkflowAttribute>> ListAsync(string definitionId, CancellationToken ct);
 }

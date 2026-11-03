@@ -1,0 +1,74 @@
+# Configure fields BEFORE the workflow. Run one request at a time.
+@baseUrl = http://localhost:5000
+@definitionId = catalog-expense-v1
+
+### Login as internal configurator/admin
+# @name catalogAdmin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{ "username": "admin", "password": "password" }
+
+### Preconfigure an active field; id omitted/0 creates, positive id updates
+# @name amountField
+POST {{baseUrl}}/api/workflow-attributes
+Authorization: Bearer {{catalogAdmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "definitionId": "{{definitionId}}",
+  "status": "Active",
+  "attribute": { "key": "claimAmount", "type": "Decimal", "required": true, "minimum": 0 }
+}
+
+### This inactive field will NOT be added to the workflow
+POST {{baseUrl}}/api/workflow-attributes
+Authorization: Bearer {{catalogAdmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{ "definitionId": "{{definitionId}}", "status": "Inactive", "attribute": { "key": "oldNotes", "type": "String" } }
+
+### Inspect the master (shows both statuses)
+GET {{baseUrl}}/api/workflow-attributes?definitionId={{definitionId}}
+Authorization: Bearer {{catalogAdmin.response.body.$.accessToken}}
+
+### Create the native Elsa family using YOUR definition_id; attributes come from the table
+# John is already returned by the username demo master. No registration is needed.
+# @name catalogDraft
+POST {{baseUrl}}/api/workflow-configurations
+Authorization: Bearer {{catalogAdmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "id": 0,
+  "definition_id": "{{definitionId}}",
+  "configuration": {
+    "name": "Catalog expense claim",
+    "startStage": "A",
+    "stages": [{
+      "key": "A", "title": "John approval",
+      "assignment": { "policy": "Specific", "members": ["external:username-demo:U001"], "userId": "external:username-demo:U001" },
+      "approveTo": { "kind": "Approved" }, "rejectTo": { "kind": "Rejected" }
+    }]
+  }
+}
+
+### Publish the saved attribute snapshot
+# @name catalogPublished
+POST {{baseUrl}}/api/workflow-configurations/{{catalogDraft.response.body.$.id}}/publish
+Authorization: Bearer {{catalogAdmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{ "expectedRevision": {{catalogDraft.response.body.$.revision}} }
+
+### Internal user starts the instance with ONLY active attributes
+POST {{baseUrl}}/elsa/api/workflow-definitions/{{definitionId}}/execute
+Authorization: Bearer {{catalogAdmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{ "input": { "attributes": { "claimAmount": 6000 } } }
+
+# Continue using John's native task requests from External-Masters.http.
+# Reusing definition_id with id=0 returns 409. To edit, POST the existing configuration id
+# and expectedRevision; definition_id cannot change. Catalog-backed edits reload active fields.
+# Published/active instances retain their snapshot; next-draft reloads the current active master.

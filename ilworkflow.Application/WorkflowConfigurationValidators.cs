@@ -37,14 +37,9 @@ public sealed class WorkflowConfigurationValidator : AbstractValidator<WorkflowS
             if (setup.Attributes.Select(x => x.Key).Distinct().Count() != setup.Attributes.Length) Error("Duplicate attribute keys.");
             if (setup.Stages.Select(x => x.Key).Distinct().Count() != setup.Stages.Length) { Error("Duplicate stage keys."); return; }
             if (!setup.Stages.Any(x => x.Key == setup.StartStage)) Error("Unknown start stage.");
+            var fields = new AttributeDefinitionValidator();
             foreach (var field in setup.Attributes)
-            {
-                if (field.Key is "attributes" or "requesterId" || !Key(field.Key) || !Enum.IsDefined(field.Type)) Error("Invalid attribute key/type.");
-                if (field.Type == AttributeType.Choice && (field.Choices is null || field.Choices.Length == 0 || field.Choices.Any(string.IsNullOrWhiteSpace) || field.Choices.Distinct().Count() != field.Choices.Length)) Error($"Choices required for {field.Key}.");
-                if (field.MaxLength is <= 0 || field.Minimum > field.Maximum) Error($"Invalid constraints for {field.Key}.");
-                if (field.MaxLength is not null && field.Type != AttributeType.String) Error("MaxLength applies to strings only.");
-                if ((field.Minimum is not null || field.Maximum is not null) && field.Type is not (AttributeType.Decimal or AttributeType.Integer)) Error("Numeric limits apply to numbers only.");
-            }
+                foreach (var failure in fields.Validate(field).Errors) Error(failure.ErrorMessage);
             bool DestinationValid(Destination? destination, bool approve)
             {
                 if (destination is null || !Enum.IsDefined(destination.Kind)) return false;

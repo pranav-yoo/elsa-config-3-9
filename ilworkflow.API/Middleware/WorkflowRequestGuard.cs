@@ -32,12 +32,12 @@ public sealed class WorkflowRequestGuard
             var path = http.Request.Path.Value ?? "";
             // A preview must never mix application PostgreSQL writes with Elsa's temporary memory stores.
             // Local login remains available for browsing authorized documentation; business operations do not.
-            if (_preview && (path.StartsWith("/api/workflow-configurations", StringComparison.OrdinalIgnoreCase)
+            if (_preview && ((path.StartsWith("/api/workflow-configurations", StringComparison.OrdinalIgnoreCase) || path.StartsWith("/api/workflow-attributes", StringComparison.OrdinalIgnoreCase))
                 || path.StartsWith("/elsa/api/", StringComparison.OrdinalIgnoreCase)
                     && !HttpMethods.IsGet(http.Request.Method) && !HttpMethods.IsHead(http.Request.Method)
                     && !path.TrimEnd('/').Equals("/elsa/api/identity/login", StringComparison.OrdinalIgnoreCase)))
                 throw new ApiException(503, "Swagger preview is documentation-only. Set SwaggerPreview=false and configure PostgreSQL for workflow operations.");
-            if (path.StartsWith("/api/workflow-configurations", StringComparison.OrdinalIgnoreCase))
+            if ((path.StartsWith("/api/workflow-configurations", StringComparison.OrdinalIgnoreCase) || path.StartsWith("/api/workflow-attributes", StringComparison.OrdinalIgnoreCase)))
             {
                 if (!string.IsNullOrEmpty(http.User.FindFirstValue("tenant"))) throw new ApiException(403, "This version supports the default organization only.");
                 await _next(http); return;

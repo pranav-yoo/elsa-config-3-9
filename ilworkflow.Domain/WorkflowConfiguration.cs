@@ -20,6 +20,7 @@ public sealed class WorkflowConfiguration
     public int DefinitionVersion { get; set; }
     public long Revision { get; set; } = 1;
     // Frozen survives native retraction: a previously published snapshot can never be edited.
+    public bool UsesAttributeCatalog { get; set; }
     public bool Frozen { get; set; }
     public bool Ready { get; set; }
     public string DefinitionHash { get; set; } = "";

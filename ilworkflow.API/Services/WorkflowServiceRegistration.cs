@@ -96,10 +96,12 @@ public static class WorkflowServiceRegistration
         }
         services.AddDbContext<ApplicationDbContext>(options => options.UseNpgsql(connectionString,
             provider => provider.MigrationsHistoryTable("__EFMigrationsHistory", "Application")));
-        services.AddControllers().AddJsonOptions(options =>
+        // FluentValidation handles required fields; catalog-backed requests may omit inline attributes.
+        services.AddControllers(options => options.SuppressImplicitRequiredAttributeForNonNullableReferenceTypes = true).AddJsonOptions(options =>
             options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter(allowIntegerValues: false)));
         services.AddScoped<WorkflowConfigurationValidator>();
         services.AddScoped<IWorkflowConfigurationService, WorkflowConfigurationService>();
+        services.AddScoped<IWorkflowAttributeService, WorkflowAttributeService>();
         services.AddSingleton<WorkflowDefinitionBuilder>();
         services.AddScoped<AssignmentResolver>();
         services.AddScoped<WorkflowAccessService>();

@@ -19,3 +19,9 @@ Run `dotnet run --project ilworkflow.API --launch-profile http`. API owns settin
 Infrastructure deliberately keeps assembly name IlWorkflow.Api and the IlWorkflow.Api.Workflows/Tickets activity namespaces, because persisted Elsa state can refer to those CLR identities. The API host uses ilworkflow.API.Host. These compatibility names do not reverse project dependencies. Migration identifiers/schemas stay unchanged; moving files does not recreate data or rewrite published definitions.
 
 README documents the live workflow, identity, request-file, preview and restart checks.
+
+## Preconfigured attribute master
+
+Domain `WorkflowAttribute` represents a field linked to a stable definition ID with an Active/Inactive status. Application `IWorkflowAttributeService` and shared FluentValidation validators define its contract. Infrastructure `WorkflowAttributeService` stores it in `Application.WorkflowAttributes`; API `WorkflowAttributesController` exposes configurator-only POST create/update and GET listing.
+
+`SaveConfigurationRequest.definition_id` supplies the native Elsa family ID. The configuration adapter locks/checks that ID and snapshots only its active master fields before generating the graph. Catalog-backed saves and next-version creation refresh that snapshot; publication and running instances remain pinned. Legacy clients without definition_id continue using inline schema. The table/catalog flag migration leaves all existing configurations and native Elsa tables intact.

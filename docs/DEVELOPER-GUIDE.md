@@ -41,7 +41,7 @@ Approver token
 | ilworkflow.Infrastructure/Configuration/WorkflowConfigurationService.cs | SaveAsync, PublishAsync, CreateNextDraftAsync, ApplySetup | Coordinate our schema snapshot with native Elsa version lifecycle; never manage task claims. |
 | ilworkflow.Domain/WorkflowConfiguration.cs | records/enums/JSON settings | Define the supported configuration vocabulary; reject unknown enum values rather than accept arbitrary strings or script source. |
 | ilworkflow.Application/WorkflowConfigurationValidators.cs | WorkflowConfigurationValidator, TicketInputValidator, AttributeRules | Centralize field validation, eligibility, typed conditions and graph checks using FluentValidation. |
-| ilworkflow.Infrastructure/Persistence/ApplicationDbContext.cs | model mapping and explicit migration | Store only JSONB configuration linked to exact Elsa version IDs, using a separate schema and migration history. |
+| ilworkflow.Infrastructure/Persistence/ApplicationDbContext.cs | model mapping and explicit migration | Store version-linked JSONB configuration and the preconfigured attribute master, using a separate schema and migration history. |
 | ilworkflow.Infrastructure/Workflows/WorkflowDefinitionBuilder.cs | Build | Compile configuration into a native flowchart; native FlowDecision nodes read persisted typed comparison results. |
 | ilworkflow.Infrastructure/Workflows/TicketReview.cs | InitializeTicket, TicketReview, FinishTicket | Thin typed integration activities around native human tasks; own no task table or claim state. |
 | ilworkflow.Application/AssignmentResolver.cs | ResolveAsync | Select eligible candidates/initial owner from supported policies; Elsa owns the resulting assignment. |
@@ -161,3 +161,11 @@ Pending-task restart recovery must be tested after changes to activity types, ca
 The native task command store can race after its initial operation lookup. PostgreSQL uniqueness errors are mapped to HTTP 409 at the API boundary; the database constraint remains authoritative. Concurrent-claim tests use distinct operation IDs and require one winner, with an explicit denial/conflict for the other caller.
 
 Native completion is asynchronous: 202 is acceptance, not proof the next task exists yet. Poll the next task/instance. Submission retries are not yet deduplicated; correlation IDs are searchable references, not idempotency keys. An outbox/idempotent submission mechanism, parallel approval thresholds, large payload/retention policies, multi-node runtime coordination, production identity-directory linking, attachments and notifications are later work.
+
+## Named definitions and active field master
+
+Use Attribute-Catalog.http to create Active/Inactive master fields through POST /api/workflow-attributes before creating the workflow. Pass definition_id in the configuration POST; that exact native Elsa family ID is locked and checked for collisions. The request's inline attributes are ignored and may be omitted. The adapter selects only active fields for that family and validates all stage conditions against them.
+
+UsesAttributeCatalog persists this source choice. Subsequent draft saves and next-draft creation refresh active fields even when definition_id is omitted; IDs cannot be changed on updates. Published snapshots/running instances are unaffected by later master edits. Legacy callers without definition_id retain inline schema. Catalog-source migration defaults false for existing rows and adds Application.WorkflowAttributes without modifying native Elsa tables. Attribute keys are unique within a definition; the same key may exist in different families. Configuration/attribute controllers require the existing configurator permission and are unavailable in preview mode.
+
+AttributeDefinitionValidator is shared by master writes and configuration validation. WorkflowAttributeService implements the application port with EF Core; the API controller contains no persistence logic. Tests/AttributeCatalog.py exercises both field storage and native workflow execution/approval.
