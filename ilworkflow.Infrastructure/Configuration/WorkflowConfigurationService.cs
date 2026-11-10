@@ -25,17 +25,6 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
         if (request.Id is < 0) throw new ApiException(400, "ID cannot be negative.");
         if (request.Configuration is null) throw new ApiException(400, "Configuration is required.");
         if (request.DefinitionId is not null) await new DefinitionIdValidator().ValidateAndThrowAsync(request.DefinitionId, ct);
-        // Named definitions use the preconfigured active field master, never client-supplied attributes.
-        // Old callers without definition_id retain their existing inline-schema contract.
-        var setup = request.Configuration;
-        if (request.DefinitionId is not null)
-            setup = setup with { Attributes = await ActiveAttributesAsync(request.DefinitionId, ct) };
-        if (request.Id is > 0 && request.DefinitionId is null)
-        {
-            var current = await GetAsync(request.Id.Value, ct);
-            if (current.UsesAttributeCatalog) setup = setup with { Attributes = await ActiveAttributesAsync(current.DefinitionId, ct) };
-        }
-        await validator.ValidateAndThrowAsync(setup, ct);
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         WorkflowConfiguration row;
         WorkflowDefinition definition;
@@ -50,7 +39,7 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
                 definition.DefinitionId = request.DefinitionId;
             }
             else definition = await publisher.NewAsync(cancellationToken: ct);
-            row = new() { DefinitionId = definition.DefinitionId, DefinitionVersionId = definition.Id, DefinitionVersion = definition.Version, UsesAttributeCatalog = request.DefinitionId is not null };
+            row = new() { DefinitionId = definition.DefinitionId, DefinitionVersionId = definition.Id, DefinitionVersion = definition.Version };
             db.WorkflowConfigurations.Add(row);
         }
         else
@@ -66,6 +55,10 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
             if (definition.IsPublished) throw new ApiException(409, "Elsa version is already published.");
             row.Revision++;
         }
+        var input = request.Configuration;
+        var setup = await MapConditionalAttributesAsync(row.DefinitionId, new WorkflowSetup(input.Name, [], input.StartStage, input.Stages), ct);
+        await validator.ValidateAndThrowAsync(setup, ct);
+        row.UsesAttributeCatalog = true;
         row.ConfigurationJson = ConfigurationJson.Write(setup);
         row.Ready = false;
         ApplySetup(definition, setup);
@@ -77,9 +70,25 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
         await transaction.CommitAsync(ct);
         return row;
     }
-    private async Task<AttributeDefinition[]> ActiveAttributesAsync(string definitionId, CancellationToken ct) =>
-        (await db.WorkflowAttributes.AsNoTracking().Where(x => x.DefinitionId == definitionId && x.Status == AttributeStatus.Active)
-            .OrderBy(x => x.Id).ToArrayAsync(ct)).Select(x => x.ToDefinition()).ToArray();
+    private async Task<WorkflowSetup> MapConditionalAttributesAsync(string definitionId, WorkflowSetup setup, CancellationToken ct)
+    {
+        // Collect keys from both kinds of conditions. Leave malformed rules to FluentValidation.
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var stage in setup.Stages ?? [])
+        {
+            foreach (var rule in stage?.ApproveRules ?? [])
+                if (rule?.When?.Attribute is { } key) keys.Add(key);
+            foreach (var rule in stage?.Assignment?.Rules ?? [])
+                if (rule?.When?.Attribute is { } key) keys.Add(key);
+        }
+
+        if (keys.Count == 0) return setup with { Attributes = [] };
+
+        var fields = await db.WorkflowAttributes.AsNoTracking()
+            .Where(x => x.DefinitionId == definitionId && x.Status == AttributeStatus.Active && keys.Contains(x.Key))
+            .OrderBy(x => x.Id).ToArrayAsync(ct);
+        return setup with { Attributes = fields.Select(x => x.ToDefinition() with { Required = true }).ToArray() };
+    }
 
     public async Task ValidateAsync(long id, CancellationToken ct) => await validator.ValidateAndThrowAsync(ConfigurationJson.Read<WorkflowSetup>((await GetAsync(id, ct)).ConfigurationJson), ct);
 
@@ -118,17 +127,17 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
         if (!source.Ready) throw new ApiException(409, "Publish the source version first.");
         var existing = await db.WorkflowConfigurations.FirstOrDefaultAsync(x => x.DefinitionId == source.DefinitionId && !x.Frozen, ct);
         if (existing is not null) return existing;
-        var draft = await publisher.GetDraftAsync(source.DefinitionId, VersionOptions.Published, ct) ?? throw new ApiException(409, "Published definition is missing.");
         // Clone the active published native version, even when the requested source snapshot is historical.
         // Rebuild from that source's configuration so its schema and generated graph remain aligned.
         var setup = ConfigurationJson.Read<WorkflowSetup>(source.ConfigurationJson);
-        if (source.UsesAttributeCatalog) setup = setup with { Attributes = await ActiveAttributesAsync(source.DefinitionId, ct) };
+        setup = await MapConditionalAttributesAsync(source.DefinitionId, setup, ct);
         await validator.ValidateAndThrowAsync(setup, ct);
+        var draft = await publisher.GetDraftAsync(source.DefinitionId, VersionOptions.Published, ct) ?? throw new ApiException(409, "Published definition is missing.");
         ApplySetup(draft, setup);
         await publisher.SaveDraftAsync(draft, ct);
         var storedDraft = await definitions.FindAsync(new WorkflowDefinitionFilter { Id = draft.Id }, ct);
         var row = new WorkflowConfiguration { DefinitionId = draft.DefinitionId, DefinitionVersionId = draft.Id,
-            DefinitionVersion = draft.Version, ConfigurationJson = ConfigurationJson.Write(setup), UsesAttributeCatalog = source.UsesAttributeCatalog, DefinitionHash = Hash(storedDraft!.StringData ?? "") };
+            DefinitionVersion = draft.Version, ConfigurationJson = ConfigurationJson.Write(setup), UsesAttributeCatalog = true, DefinitionHash = Hash(storedDraft!.StringData ?? "") };
         db.WorkflowConfigurations.Add(row);
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
@@ -140,15 +149,12 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
         definition.Name = setup.Name;
         definition.StringData = builder.Build(setup);
         definition.MaterializerName = "Json";
-        // Native execute accepts the complete object; conditional fields are also described as inputs.
-        var conditionalKeys = setup.Stages.SelectMany(stage =>
-            (stage.ApproveRules ?? []).Select(rule => rule.When.Attribute)
-                .Concat((stage.Assignment.Rules ?? []).Select(rule => rule.When.Attribute))).ToHashSet();
+        // The snapshot contains only mapped condition fields. Native execute also accepts them in one object.
         definition.Inputs = new List<Elsa.Workflows.Models.InputDefinition>
         {
             new() { Name = "attributes", Type = typeof(object) }, new() { Name = "requesterId", Type = typeof(string) }
         };
-        foreach (var field in setup.Attributes.Where(field => conditionalKeys.Contains(field.Key)))
+        foreach (var field in setup.Attributes)
             definition.Inputs.Add(new() { Name = field.Key, Type = field.Type switch
             {
                 AttributeType.Decimal => typeof(decimal), AttributeType.Integer => typeof(long), AttributeType.Boolean => typeof(bool), _ => typeof(string)

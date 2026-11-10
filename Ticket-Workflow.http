@@ -83,7 +83,7 @@ Content-Type: application/json
 
 
 ### Submit through native Elsa execute
-# Expect workflowState.subStatus=Suspended. Requester is derived from your token. No /api/tickets endpoint exists.
+# Expect workflowState.subStatus=Suspended. Requester is derived from your token. Supply the conditional fields under input.attributes.
 # @name startTicket
 POST {{baseUrl}}/elsa/api/workflow-definitions/{{definitionId}}/execute
 Authorization: Bearer {{requesterLogin.response.body.$.accessToken}}
@@ -93,8 +93,6 @@ Content-Type: application/json
   "correlationId": "CLAIM-{{$guid}}",
   "input": {
     "attributes": {
-      "firstName": "Pranav",
-      "lastName": "Shah",
       "claimAmount": 6000
     }
   }
@@ -131,7 +129,7 @@ POST {{baseUrl}}/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}/comp
 Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
-{"expectedRevision": {{aDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "Approve", "data": {"comment": "A reviewed"}}
+{"expectedRevision": {{aDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "APPROVE", "data": {"comment": "A reviewed"}}
 
 
 ### B: find current task
@@ -164,7 +162,7 @@ POST {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}/comp
 Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
-{"expectedRevision": {{bDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "Approve", "data": {"comment": "B reviewed"}}
+{"expectedRevision": {{bDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "APPROVE", "data": {"comment": "B reviewed"}}
 
 
 ### C: find current task
@@ -187,7 +185,7 @@ POST {{baseUrl}}/elsa/api/user-tasks/{{cTasks.response.body.$.items[0].id}}/comp
 Authorization: Bearer {{claraLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
-{"expectedRevision": {{cDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "Approve", "data": {"comment": "C reviewed"}}
+{"expectedRevision": {{cDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "APPROVE", "data": {"comment": "C reviewed"}}
 
 
 ### D: find current task
@@ -210,7 +208,7 @@ POST {{baseUrl}}/elsa/api/user-tasks/{{dTasks.response.body.$.items[0].id}}/comp
 Authorization: Bearer {{danLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
-{"expectedRevision": {{dDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "Approve", "data": {"comment": "D reviewed"}}
+{"expectedRevision": {{dDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "APPROVE", "data": {"comment": "D reviewed"}}
 
 
 ### Read final instance
@@ -241,7 +239,7 @@ POST {{baseUrl}}/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}/comp
 Authorization: Bearer {{aliceLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
-{"expectedRevision": {{aDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "Reject", "data": {"reason": "Please correct this request"}}
+{"expectedRevision": {{aDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "REJECT", "data": {"reason": "Please correct this request"}}
 
 
 ### INSTEAD reject B -> new A task
@@ -251,7 +249,7 @@ POST {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}/comp
 Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
-{"expectedRevision": {{bDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "Reject", "data": {"reason": "Please correct this request"}}
+{"expectedRevision": {{bDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "REJECT", "data": {"reason": "Please correct this request"}}
 
 
 ### INSTEAD reject C -> terminal Rejected
@@ -261,7 +259,7 @@ POST {{baseUrl}}/elsa/api/user-tasks/{{cTasks.response.body.$.items[0].id}}/comp
 Authorization: Bearer {{claraLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
-{"expectedRevision": {{cDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "Reject", "data": {"reason": "Please correct this request"}}
+{"expectedRevision": {{cDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "REJECT", "data": {"reason": "Please correct this request"}}
 
 
 ### INSTEAD reject D -> correction then D
@@ -271,7 +269,7 @@ POST {{baseUrl}}/elsa/api/user-tasks/{{dTasks.response.body.$.items[0].id}}/comp
 Authorization: Bearer {{danLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
-{"expectedRevision": {{dDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "Reject", "data": {"reason": "Please correct this request"}}
+{"expectedRevision": {{dDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "REJECT", "data": {"reason": "Please correct this request"}}
 
 
 ### After A/D rejection: find requester correction
@@ -290,8 +288,8 @@ Content-Type: application/json
 {
   "expectedRevision": {{correctionTasks.response.body.$.items[0].revision}},
   "operationId": "{{$guid}}",
-  "actionKey": "Resubmit",
-  "data": {"attributes": {"firstName": "Pranav", "lastName": "Shah", "claimAmount": 4000}}
+  "actionKey": "RESUBMIT",
+  "data": {"attributes": {"claimAmount": 4000}}
 }
 
 

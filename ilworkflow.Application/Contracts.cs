@@ -2,8 +2,9 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 namespace IlWorkflow.Application.Configuration;
 
-public sealed record SaveConfigurationRequest(long? Id, long? ExpectedRevision, WorkflowSetup Configuration,
+public sealed record SaveConfigurationRequest(long? Id, long? ExpectedRevision, WorkflowSetupRequest Configuration,
     [property: JsonPropertyName("definition_id")] string? DefinitionId = null);
+public sealed record WorkflowSetupRequest(string Name, string StartStage, StageDefinition[] Stages);
 public sealed record RevisionRequest(long ExpectedRevision);
 
 public static class ConfigurationJson

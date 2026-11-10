@@ -18,6 +18,11 @@ public sealed class WorkflowDefinitionBuilder
         {
             source = new { activity = source, port }, target = new { activity = target, port = "In" }
         });
+        object Review(string id, string key, bool correction = false, bool parallel = false) => new
+        {
+            id, type = "Tickets.TicketReview", version = 1, configurationJson = Literal(snapshot),
+            stageKey = Literal(key), correction = Literal(correction, "Boolean"), parallelBranch = Literal(parallel, "Boolean")
+        };
         activities.Add(new { id = "initialize", type = "Tickets.InitializeTicket", version = 1, configurationJson = Literal(snapshot) });
         activities.Add(new { id = "approved", type = "Tickets.FinishTicket", version = 1, outcome = Literal(nameof(TicketOutcome.Approved)) });
         activities.Add(new { id = "rejected", type = "Tickets.FinishTicket", version = 1, outcome = Literal(nameof(TicketOutcome.Rejected)) });
@@ -29,17 +34,20 @@ public sealed class WorkflowDefinitionBuilder
             if (destination.Kind == DestinationKind.Rejected) return "rejected";
             if (destination.Kind == DestinationKind.Stage) return "stage_" + destination.StageKey;
             var correctionId = "correction_" + origin;
-            activities.Add(new { id = correctionId, type = "Tickets.TicketReview", version = 1,
-                configurationJson = Literal(snapshot), stageKey = Literal(origin), correction = Literal(true, "Boolean") });
+            activities.Add(Review(correctionId, origin, correction: true));
             Link(correctionId, nameof(TaskDecision.Resubmit), "stage_" + destination.StageKey);
             return correctionId;
         }
         Link("initialize", "Done", "stage_" + setup.StartStage);
-        foreach (var stage in setup.Stages)
+        var parallelMembers = setup.Stages.SelectMany(stage => stage.ParallelWith ?? []).ToHashSet(StringComparer.Ordinal);
+        foreach (var stage in setup.Stages.Where(stage => !parallelMembers.Contains(stage.Key)))
         {
             var id = "stage_" + stage.Key;
-            activities.Add(new { id, type = "Tickets.TicketReview", version = 1,
-                configurationJson = Literal(snapshot), stageKey = Literal(stage.Key), correction = Literal(false, "Boolean") });
+            if (stage.ParallelWith is { } members)
+                activities.Add(new { id, type = "Tickets.ParallelTicketReview", version = 1, stageKey = Literal(stage.Key),
+                    branches = members.Prepend(stage.Key).Select(key => Review($"parallel-branch-{stage.Key}-{key}", key, parallel: true)).ToArray() });
+            else
+                activities.Add(Review(id, stage.Key));
             Link(id, nameof(TaskDecision.Reject), Target(stage.RejectTo, stage.Key));
             var rules = stage.ApproveRules ?? [];
             Link(id, nameof(TaskDecision.Approve), rules.Length == 0 ? Target(stage.ApproveTo, stage.Key) : "rule_" + stage.Key + "_0");

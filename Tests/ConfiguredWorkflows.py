@@ -79,10 +79,15 @@ def fixture():
         {'key':'C','title':'C High-value approval','assignment':assign('Condition',['clara'],rules=[{'when':condition,'userId':ids['clara']}]),'approveTo':dest('Stage','D'),'rejectTo':dest('Rejected')},
         {'key':'D','title':'D Final approval','assignment':assign('Specific',['dan'],'dan'),'approveTo':dest('Approved'),'rejectTo':dest('Correction','D')}]}
 
-def create(setup=None):return api('POST','/api/workflow-configurations',{'id':0,'configuration':setup or fixture()},'configurator')
+def create(setup=None,expected=(200,)):
+    setup=copy.deepcopy(setup or fixture())
+    definition='configured-'+uuid.uuid4().hex
+    for field in setup.pop('attributes'):
+        api('POST','/api/workflow-attributes',{'definitionId':definition,'attribute':field},'configurator')
+    return api('POST','/api/workflow-configurations',{'id':0,'definition_id':definition,'configuration':setup},'configurator',expected)
 def publish(config):return api('POST',f'/api/workflow-configurations/{config["id"]}/publish',{'expectedRevision':config['revision']},'configurator')
 def start(config,amount=6000):
-    result=api('POST',f'/elsa/api/workflow-definitions/{config["definitionId"]}/execute',{'correlationId':'CHECK-'+str(uuid.uuid4()),'input':{'attributes':{'firstName':'Pranav','lastName':'Shah','claimAmount':amount}}},'requester')
+    result=api('POST',f'/elsa/api/workflow-definitions/{config["definitionId"]}/execute',{'correlationId':'CHECK-'+str(uuid.uuid4()),'input':{'attributes':{'claimAmount':amount}}},'requester')
     state=result['workflowState']; assert state['subStatus']=='Suspended',json.dumps(state.get('incidents'))[:2000]
     return state['id']
 
@@ -102,7 +107,11 @@ def decide(instance,user,action='Approve',data=None,replay=False):
     if t['status'] in ('Available','Unassigned'):
         api('POST',f'/elsa/api/user-tasks/{t["id"]}/claim',{'expectedRevision':t['revision'],'operationId':str(uuid.uuid4())},user)
         t=api('GET','/elsa/api/user-tasks/'+t['id'],user=user)
-    payload={'expectedRevision':t['revision'],'operationId':str(uuid.uuid4()),'actionKey':action,'data':data if data is not None else {'comment':'Reviewed'}}
+    keys={item['key'] for item in t['actions']}
+    action_key=next(key for key in keys if key.upper()==action.upper())
+    if not args.verify_restart:
+        assert keys==({'RESUBMIT'} if action=='Resubmit' else {'APPROVE','REJECT'}),keys
+    payload={'expectedRevision':t['revision'],'operationId':str(uuid.uuid4()),'actionKey':action_key,'data':data if data is not None else {'comment':'Reviewed'}}
     api('POST',f'/elsa/api/user-tasks/{t["id"]}/complete',payload,user)
     if replay:api('POST',f'/elsa/api/user-tasks/{t["id"]}/complete',payload,user)
     return t,payload
@@ -148,13 +157,13 @@ decide(instance,'alice');decide(instance,'bob');decide(instance,'clara','Reject'
 print('PASS reject B to A, then terminal rejection C')
 
 instance=start(config);decide(instance,'alice','Reject',{'reason':'Correct the amount'})
-decide(instance,'requester','Resubmit',{'attributes':{'firstName':'Pranav','lastName':'Shah','claimAmount':4000}})
+decide(instance,'requester','Resubmit',{'attributes':{'claimAmount':4000}})
 decide(instance,'alice');decide(instance,'bob');decide(instance,'dan');finished(instance,'Approved')
 corrected=instance
 print('PASS correction A, revised attributes, same instance, C bypassed')
 
 instance=start(config,4000);decide(instance,'alice');decide(instance,'bob');decide(instance,'dan','Reject',{'reason':'Correct final details'})
-decide(instance,'requester','Resubmit',{'attributes':{'firstName':'Pranav','lastName':'Shah','claimAmount':6000}})
+decide(instance,'requester','Resubmit',{'attributes':{'claimAmount':6000}})
 decide(instance,'dan');finished(instance,'Approved')
 print('PASS correction D resumes configured D, without replaying B/C')
 
@@ -168,7 +177,7 @@ with ThreadPoolExecutor(max_workers=2) as pool:
     results=list(pool.map(claim,['alice','amy']))
 assert sum(results)==1,results
 winner='alice' if results[0] else 'amy';detail=task(instance,winner)
-api('POST',f'/elsa/api/user-tasks/{t["id"]}/complete',{'expectedRevision':detail['revision'],'operationId':str(uuid.uuid4()),'actionKey':'Reject','data':{}},winner,expected=(400,422))
+api('POST',f'/elsa/api/user-tasks/{t["id"]}/complete',{'expectedRevision':detail['revision'],'operationId':str(uuid.uuid4()),'actionKey':'REJECT','data':{}},winner,expected=(400,422))
 api('GET','/elsa/api/workflow-instances/'+instance,user='outsider',expected=(404,))
 api('GET','/elsa/api/workflow-instances',user='requester',expected=(403,))
 api('POST','/api/workflow-configurations',{'id':0,'configuration':fixture()},'requester',expected=(403,))
@@ -181,11 +190,11 @@ print('PASS concurrent claims, required reason, authentication, configuration pe
 
 for mutate in ('duplicate','cycle','operator','member'):
     setup=fixture()
-    if mutate=='duplicate':setup['attributes'].append(copy.deepcopy(setup['attributes'][0]))
+    if mutate=='duplicate':setup['stages'].append(copy.deepcopy(setup['stages'][0]))
     if mutate=='cycle':setup['stages'][-1]['approveTo']={'kind':'Stage','stageKey':'A'}
     if mutate=='operator':setup['stages'][1]['approveRules'][0]['when']['attribute']='firstName'
     if mutate=='member':setup['stages'][0]['assignment']['members']=[ids['requester']]
-    api('POST','/api/workflow-configurations',{'id':0,'configuration':setup},'configurator',expected=(400,))
+    create(setup,expected=(400,))
 print('PASS FluentValidation duplicate keys, cycles, type/operator mismatch and ineligible member')
 
 # A stage entered by rejection can still contain an invalid approval cycle. Validate the whole graph.
@@ -195,7 +204,7 @@ setup['stages'][0]['rejectTo']={'kind':'Stage','stageKey':'B'}
 setup['stages'][1]['approveRules']=[]
 setup['stages'][1]['approveTo']={'kind':'Stage','stageKey':'C'}
 setup['stages'][2]['approveTo']={'kind':'Stage','stageKey':'B'}
-api('POST','/api/workflow-configurations',{'id':0,'configuration':setup},'configurator',expected=(400,))
+create(setup,expected=(400,))
 print('PASS approval cycles rejected even when reached only through a rejection route')
 
 # These cases previously diverged between C# assignment and JavaScript routing.
@@ -207,9 +216,10 @@ decide(instance,'alice');decide(instance,'bob');decide(instance,'clara');decide(
 finished(instance,'Approved')
 setup=fixture();setup['attributes'].append({'key':'constructor','type':'String'})
 setup['stages'][1]['approveRules'][0]['when']={'attribute':'constructor','operator':'NotEquals','value':'blocked'}
-missing=publish(create(setup));instance=start(missing)
-decide(instance,'alice');decide(instance,'bob');decide(instance,'dan');finished(instance,'Approved')
-print('PASS exact Int64 condition routing and omitted prototype-named attributes')
+missing=publish(create(setup))
+api('POST',f'/elsa/api/workflow-definitions/{missing["definitionId"]}/execute',
+    {'input':{'attributes':{'claimAmount':6000}}},'requester',expected=(400,))
+print('PASS exact Int64 condition routing and required prototype-named attributes')
 
 # No eligible candidate must suspend; a supervisor repairs assignment through the native API.
 blocked_setup=fixture();blocked_setup['stages'][0]['assignment']['members']=[]

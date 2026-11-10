@@ -7,6 +7,7 @@
 @samplePassword = Password123!
 # Provision using Authentication.http first; copy the generated IDs below.
 # Do not substitute usernames, task IDs or workflow instance IDs for these employee IDs.
+@definitionId = configured-expense-v1
 @aliceId = PASTE_ALICE_USER_ID
 @amyId = PASTE_AMY_USER_ID
 @bobId = PASTE_BOB_USER_ID
@@ -25,8 +26,26 @@ Content-Type: application/json
 }
 
 
+### Add the conditional attribute to the catalog
+# Reuse the existing field if this definition ID already has claimAmount. The workflow makes it mandatory.
+# @name createAmountField
+POST {{baseUrl}}/api/workflow-attributes
+Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "definitionId": "{{definitionId}}",
+  "attribute": {
+    "key": "claimAmount",
+    "type": "Decimal",
+    "required": true,
+    "minimum": 0
+  }
+}
+
+
 ### Create configuration + native Elsa draft
-# Missing/zero id creates. Response contains id, definitionId, definitionVersionId and revision. Conditions are ordered; the first match wins.
+# Missing/zero id creates. Conditions are ordered; the first match wins. The API maps claimAmount from the catalog.
 # @name createConfiguration
 POST {{baseUrl}}/api/workflow-configurations
 Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
@@ -34,27 +53,9 @@ Content-Type: application/json
 
 {
   "id": 0,
+  "definition_id": "{{definitionId}}",
   "configuration": {
     "name": "Configured Expense Claim",
-    "attributes": [
-      {
-        "key": "firstName",
-        "type": "String",
-        "required": true,
-        "maxLength": 100
-      },
-      {
-        "key": "lastName",
-        "type": "String",
-        "required": true
-      },
-      {
-        "key": "claimAmount",
-        "type": "Decimal",
-        "required": true,
-        "minimum": 0
-      }
-    ],
     "startStage": "A",
     "stages": [
       {
@@ -173,7 +174,11 @@ Content-Type: application/json
 {
   "id": {{readConfiguration.response.body.$.id}},
   "expectedRevision": {{readConfiguration.response.body.$.revision}},
-  "configuration": {{readConfiguration.response.body.$.configuration}}
+  "configuration": {
+    "name": "{{readConfiguration.response.body.$.configuration.name}}",
+    "startStage": "{{readConfiguration.response.body.$.configuration.startStage}}",
+    "stages": {{readConfiguration.response.body.$.configuration.stages}}
+  }
 }
 
 

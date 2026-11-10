@@ -47,7 +47,7 @@ function Own($task,[string]$user){
     return Call $user GET "/elsa/api/user-tasks/$($task.id)" $null @(200) "Read $($task.title)"
 }
 function Decision($task,[string]$user,[string]$action,$data=@{},[string]$operationId=[guid]::NewGuid().ToString()){
-    $body=@{expectedRevision=$task.revision;operationId=$operationId;actionKey=$action;data=$data}
+    $body=@{expectedRevision=$task.revision;operationId=$operationId;actionKey=$action.ToUpperInvariant();data=$data}
     Call $user POST "/elsa/api/user-tasks/$($task.id)/complete" $body @(200,202) "$action $($task.title)" | Out-Null
     return $body
 }
@@ -62,8 +62,8 @@ foreach($amount in @(4000,5000,6000)){
     $workflow=StartClaim $amount "approved-$amount"
     $a=Own (Active $workflow 'A:') 'alice'
     Call 'dan' GET "/elsa/api/user-tasks/$($a.id)" $null @(404) 'Unrelated approver cannot read A' | Out-Null
-    Call 'alice' POST "/elsa/api/user-tasks/$($a.id)/complete" @{expectedRevision=$a.revision;operationId=[guid]::NewGuid().ToString();actionKey='Reject';data=@{}} @(422) 'Reject without reason is invalid' | Out-Null
-    Call 'alice' POST "/elsa/api/user-tasks/$($a.id)/complete" @{expectedRevision=$a.revision;operationId=[guid]::NewGuid().ToString();actionKey='Approve';data=@{attributes=@{claimAmount=1}}} @(422) 'Attributes frozen during review' | Out-Null
+    Call 'alice' POST "/elsa/api/user-tasks/$($a.id)/complete" @{expectedRevision=$a.revision;operationId=[guid]::NewGuid().ToString();actionKey='REJECT';data=@{}} @(422) 'Reject without reason is invalid' | Out-Null
+    Call 'alice' POST "/elsa/api/user-tasks/$($a.id)/complete" @{expectedRevision=$a.revision;operationId=[guid]::NewGuid().ToString();actionKey='APPROVE';data=@{attributes=@{claimAmount=1}}} @(422) 'Attributes frozen during review' | Out-Null
     $decision=Decision $a 'alice' 'Approve' @{comment='Initial checks passed'}
     Call 'alice' POST "/elsa/api/user-tasks/$($a.id)/complete" $decision @(200,202) 'Duplicate decision replay' | Out-Null
     Approve $workflow 'B' 'bob'

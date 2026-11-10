@@ -54,7 +54,6 @@ Content-Type: application/json
   "id": 0,
   "configuration": {
     "name": "Username John approval",
-    "attributes": [{ "key": "claimAmount", "type": "Decimal", "required": true, "minimum": 0 }],
     "startStage": "A",
     "stages": [{
       "key": "A",
@@ -85,7 +84,7 @@ POST {{baseUrl}}/elsa/api/workflow-definitions/{{usernamePublished.response.body
 Authorization: Bearer {{masterAdmin.response.body.$.accessToken}}
 Content-Type: application/json
 
-{ "correlationId": "MASTER-{{$guid}}", "input": { "attributes": { "claimAmount": 6000 } } }
+{ "correlationId": "MASTER-{{$guid}}" }
 
 ### 10. Specific assignment is already owned; use scope=assigned, not available.
 # @name usernameTasks
@@ -100,7 +99,7 @@ POST {{baseUrl}}/elsa/api/user-tasks/{{usernameTasks.response.body.$.items[0].id
 Authorization: Bearer {{usernameJohnToken}}
 Content-Type: application/json
 
-{ "expectedRevision": {{usernameTasks.response.body.$.items[0].revision}}, "operationId": "{{$guid}}", "actionKey": "Approve", "data": {} }
+{ "expectedRevision": {{usernameTasks.response.body.$.items[0].revision}}, "operationId": "{{$guid}}", "actionKey": "APPROVE", "data": {} }
 
 ### 12. Read the result. workflowState.output.ticketOutcome becomes Approved.
 # @name usernameFinished
@@ -117,7 +116,6 @@ Content-Type: application/json
   "id": 0,
   "configuration": {
     "name": "Email John approval",
-    "attributes": [{ "key": "claimAmount", "type": "Decimal", "required": true }],
     "startStage": "A",
     "stages": [{
       "key": "A",
@@ -147,7 +145,7 @@ POST {{baseUrl}}/elsa/api/workflow-definitions/{{emailPublished.response.body.$.
 Authorization: Bearer {{masterAdmin.response.body.$.accessToken}}
 Content-Type: application/json
 
-{ "correlationId": "EMAIL-{{$guid}}", "input": { "attributes": { "claimAmount": 4000 } } }
+{ "correlationId": "EMAIL-{{$guid}}" }
 
 ### 16. Read the assigned task/revision.
 # @name emailTasks
@@ -160,7 +158,7 @@ POST {{baseUrl}}/elsa/api/user-tasks/{{emailTasks.response.body.$.items[0].id}}/
 Authorization: Bearer {{emailJohnToken}}
 Content-Type: application/json
 
-{ "expectedRevision": {{emailTasks.response.body.$.items[0].revision}}, "operationId": "{{$guid}}", "actionKey": "Reject", "data": { "reason": "Not approved in this demonstration" } }
+{ "expectedRevision": {{emailTasks.response.body.$.items[0].revision}}, "operationId": "{{$guid}}", "actionKey": "REJECT", "data": { "reason": "Not approved in this demonstration" } }
 
 ### 18. Poll until workflowState.output.ticketOutcome becomes Rejected.
 # @name emailFinished

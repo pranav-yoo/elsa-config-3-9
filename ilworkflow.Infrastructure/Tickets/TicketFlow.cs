@@ -41,8 +41,8 @@ public sealed class TicketFlow : Activity
             TaskData = new(ctx => JsonDocument.Parse(Parent(ctx).GetProperty<string>("attributes")!).RootElement.Clone()),
             Form = new(ctx => new UserTaskFormReference("ticket-json", State(ctx).Correction ? "correction" : "review", Parent(ctx).GetProperty<string>("configuration"))),
             ActionDefinitions = new(ctx => State(ctx).Correction
-                ? [new UserTaskActionDefinition("Resubmit", "Resubmit corrections")]
-                : [new UserTaskActionDefinition("Approve", "Approve"), new UserTaskActionDefinition("Reject", "Reject")])
+                ? [new UserTaskActionDefinition(TaskActionKeys.Resubmit, "Resubmit corrections")]
+                : [new UserTaskActionDefinition(TaskActionKeys.Approve, "Approve"), new UserTaskActionDefinition(TaskActionKeys.Reject, "Reject")])
         };
     }
 
@@ -112,11 +112,12 @@ public sealed class TicketFlow : Activity
     {
         var context = completed.TargetContext;
         var stimulus = context.GetWorkflowInput<UserTaskStimulus>(UserTask.InputKey);
+        var decision = TaskActionKeys.Parse(stimulus.ActionKey);
         var ticket = TicketJson.Read<TicketConfiguration>(context.GetProperty<string>("configuration")!);
         var state = TicketJson.Read<StageTask>(context.GetProperty<string>("stageTask")!);
         if (state.Correction)
         {
-            TicketJson.Require(stimulus.ActionKey == "Resubmit", "Expected Resubmit.");
+            TicketJson.Require(decision == TaskDecision.Resubmit, "Expected RESUBMIT.");
             var attributes = stimulus.CompletionData!.Value.GetProperty("attributes").Deserialize<Dictionary<string, JsonElement>>(TicketJson.Options)!;
             TicketJson.ValidateAttributes(ticket.Definition, attributes);
             context.SetProperty("attributes", TicketJson.Write(attributes));
@@ -125,7 +126,8 @@ public sealed class TicketFlow : Activity
         }
         var stage = ticket.Definition.Stages.Single(s => s.Key == state.Key);
         var values = TicketJson.Read<Dictionary<string, JsonElement>>(context.GetProperty<string>("attributes")!);
-        var destination = stimulus.ActionKey == "Approve"
+        TicketJson.Require(decision is TaskDecision.Approve or TaskDecision.Reject, "Unknown review action.");
+        var destination = decision == TaskDecision.Approve
             ? (stage.ApproveRules ?? []).FirstOrDefault(r => TicketJson.Matches(r.When, values))?.Destination ?? stage.ApproveTo
             : stage.RejectTo;
         if (destination != "$requester") context.SetProperty("stage", destination);

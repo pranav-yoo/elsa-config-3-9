@@ -1,0 +1,152 @@
+# Run in order. Generate separate Username demo tokens with New-TestAccessToken.ps1
+# using -Identity clara, -Identity dan, and -Identity john. Paste the results below.
+# Change definitionId before creating another demo definition.
+@baseUrl = http://localhost:5000
+@definitionId =       
+@claraToken = PASTE_CLARA_TOKEN
+@danToken = eyJhbGciOiJodHRwOi8vd3d3LnczLm9yZy8yMDAxLzA0L3htbGRzaWctbW9yZSNobWFjLXNoYTI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwOi8vZWxzYS5hcGkiLCJpc3MiOiJodHRwOi8vZWxzYS5hcGkiLCJleHAiOjE3OTQzMTY2NzYsInN1YiI6ImI4ZDIyN2VlYzdmOWI4ZTkiLCJuYW1lIjoiY29uZmlndXJlZC1kYW4iLCJlbHNhOnBlcm1pc3Npb25fc3RhbXAiOiI5QjZGOTU3NzM2QkZENUE3IiwiaHR0cDovL3NjaGVtYXMubWljcm9zb2Z0LmNvbS93cy8yMDA4LzA2L2lkZW50aXR5L2NsYWltcy9yb2xlIjoiQXBwcm92ZXIiLCJwZXJtaXNzaW9ucyI6WyJ1c2VyLXRhc2tzOnZpZXciLCJ1c2VyLXRhc2tzOmNsYWltIiwidXNlci10YXNrczpjb21wbGV0ZSIsIndvcmtmbG93cy9pbnN0YW5jZXM6dmlldyJdLCJ0b2tlbl91c2UiOiJhY2Nlc3MiLCJpYXQiOjE3OTQzMTU3NzYsIm5iZiI6MTc5NDMxNTc3Nn0.DQFWqdKOdbd3QClrXKugPZOTn4apb77-oYW7Z_xYpqw
+@johnToken = PASTE_JOHN_TOKEN
+
+### 1. Log in as the internal admin
+# @name observerAdmin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{ "username": "admin", "password": "password" }
+
+### 2. Register the condition field so the task has submitted data
+# @name observerAmount
+POST {{baseUrl}}/api/workflow-attributes
+Authorization: Bearer {{observerAdmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{ "definitionId": "{{definitionId}}", "attribute": { "key": "claimAmount", "type": "Decimal" } }
+
+### 3. Configure C to be visible to D's members
+# @name observerDraft
+POST {{baseUrl}}/api/workflow-configurations
+Authorization: Bearer {{observerAdmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "definition_id": "{{definitionId}}",
+  "configuration": {
+    "name": "Claim review with read-only visibility",
+    "startStage": "C",
+    "stages": [
+      {
+        "key": "C", "title": "C - Clara review", "viewableByStages": ["D"],
+        "assignment": { "policy": "Specific", "members": ["57cdff015b09629b"], "userId": "57cdff015b09629b" },
+        "approveTo": { "kind": "Stage", "stageKey": "D" },
+        "approveRules": [{
+          "when": { "attribute": "claimAmount", "operator": "GreaterThan", "value": 5000 },
+          "destination": { "kind": "Stage", "stageKey": "D" }
+        }],
+        "rejectTo": { "kind": "Rejected" }
+      },
+      {
+        "key": "D", "title": "D - Dan review",
+        "assignment": { "policy": "Specific", "members": ["b8d227eec7f9b8e9"], "userId": "b8d227eec7f9b8e9" },
+        "approveTo": { "kind": "Approved" },
+        "rejectTo": { "kind": "Rejected" }
+      }
+    ]
+  }
+}
+
+### 4. Publish
+# @name observerPublished
+POST {{baseUrl}}/api/workflow-configurations/{{observerDraft.response.body.$.id}}/publish
+Authorization: Bearer {{observerAdmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{ "expectedRevision": {{observerDraft.response.body.$.revision}} }
+
+### 5. Start the workflow as admin
+# @name observerRun
+POST {{baseUrl}}/elsa/api/workflow-definitions/{{definitionId}}/execute
+Authorization: Bearer {{observerAdmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{ "input": { "attributes": { "claimAmount": 6000 } } }
+
+### 6. Dan can already see C in Observed
+# @name observedTasks
+GET {{baseUrl}}/elsa/api/user-tasks?scope=observed&workflowInstanceId={{observerRun.response.body.$.workflowState.id}}&includeTotalCount=true
+Authorization: Bearer {{danToken}}
+
+### 7. Dan has no assigned task yet
+# @name observerAssigned
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&workflowInstanceId={{observerRun.response.body.$.workflowState.id}}
+Authorization: Bearer {{danToken}}
+
+### 8. Dan has no claimable task here
+# @name observerAvailable
+GET {{baseUrl}}/elsa/api/user-tasks?scope=available&workflowInstanceId={{observerRun.response.body.$.workflowState.id}}
+Authorization: Bearer {{danToken}}
+
+### 9. Dan reads C's detail and submitted data
+# Check allowedActions. The native actions array describes the form, not permission to act.
+# @name observedDetail
+GET {{baseUrl}}/elsa/api/user-tasks/{{observedTasks.response.body.$.items[0].id}}
+Authorization: Bearer {{danToken}}
+
+### 10. Dan reads C's task history
+# @name observedEvents
+GET {{baseUrl}}/elsa/api/user-tasks/{{observedDetail.response.body.$.id}}/events
+Authorization: Bearer {{danToken}}
+
+### 11. John cannot discover C
+# @name outsiderObserved
+GET {{baseUrl}}/elsa/api/user-tasks?scope=observed&workflowInstanceId={{observerRun.response.body.$.workflowState.id}}&includeTotalCount=true
+Authorization: Bearer {{johnToken}}
+
+### 12. John cannot open C by ID
+# @name outsiderDetail
+# @expect 404
+GET {{baseUrl}}/elsa/api/user-tasks/{{observedDetail.response.body.$.id}}
+Authorization: Bearer {{johnToken}}
+
+### 13. Dan cannot claim C
+# @name observerClaimDenied
+# @expect 403 404
+POST {{baseUrl}}/elsa/api/user-tasks/{{observedDetail.response.body.$.id}}/claim
+Authorization: Bearer {{danToken}}
+Content-Type: application/json
+
+{ "expectedRevision": {{observedDetail.response.body.$.revision}}, "operationId": "{{$guid}}" }
+
+### 14. Dan cannot approve C
+# @name observerApproveDenied
+# @expect 403 404
+POST {{baseUrl}}/elsa/api/user-tasks/{{observedDetail.response.body.$.id}}/complete
+Authorization: Bearer {{danToken}}
+Content-Type: application/json
+
+{ "expectedRevision": {{observedDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "APPROVE", "data": {} }
+
+### 15. Clara approves her own C task
+# @name observedClaraApprove
+POST {{baseUrl}}/elsa/api/user-tasks/{{observedDetail.response.body.$.id}}/complete
+Authorization: Bearer {{claraToken}}
+Content-Type: application/json
+
+{ "expectedRevision": {{observedDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "APPROVE", "data": {} }
+
+### 16. Dan finds his own D task
+# @name observedDanTask
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&status=Assigned&workflowInstanceId={{observerRun.response.body.$.workflowState.id}}
+Authorization: Bearer {{danToken}}
+
+### 17. Dan approves D
+# @name observedDanApprove
+POST {{baseUrl}}/elsa/api/user-tasks/{{observedDanTask.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{danToken}}
+Content-Type: application/json
+
+{ "expectedRevision": {{observedDanTask.response.body.$.items[0].revision}}, "operationId": "{{$guid}}", "actionKey": "APPROVE", "data": {} }
+
+### 18. Verify the workflow outcome
+# @name observedFinished
+GET {{baseUrl}}/elsa/api/workflow-instances/{{observerRun.response.body.$.workflowState.id}}
+Authorization: Bearer {{observerAdmin.response.body.$.accessToken}}

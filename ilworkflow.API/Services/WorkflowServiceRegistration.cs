@@ -91,6 +91,11 @@ public static class WorkflowServiceRegistration
         services.AddScoped<IApproverDirectory, TicketIdentity>();
         if (!swaggerPreview)
         {
+            services.AddSingleton<IUserTaskAccessPolicy, ObservedTaskAccess>();
+            services.AddScoped<ObservedUserTasks>();
+            services.AddScoped<ParallelTaskCommands>();
+            services.AddScoped<DefaultUserTaskWorkflowResumer>();
+            services.AddScoped<IUserTaskWorkflowResumer, ParallelTaskWorkflowResumer>();
             services.AddScoped<Elsa.Persistence.EFCore.IEntityModelCreatingHandler, UserTaskPostgreSqlModel>();
             services.AddScoped<IUserTaskRepository, UserTaskNullableJsonRepository>();
         }

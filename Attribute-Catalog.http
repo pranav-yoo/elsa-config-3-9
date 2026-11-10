@@ -1,6 +1,9 @@
 # Configure fields BEFORE the workflow. Run one request at a time.
+# Reusing definition_id with id=0 returns 409. To edit, POST the existing configuration id
+# and expectedRevision. Draft saves resolve current conditional fields for the same definition_id.
+# Published versions and their instances retain their saved snapshot.
 @baseUrl = http://localhost:5000
-@definitionId = catalog-expense-v1
+@definitionId = catalog-expense-p3
 
 ### Login as internal configurator/admin
 # @name catalogAdmin
@@ -21,7 +24,7 @@ Content-Type: application/json
   "attribute": { "key": "claimAmount", "type": "Decimal", "required": true, "minimum": 0 }
 }
 
-### This inactive field will NOT be added to the workflow
+### An inactive field cannot be used in a condition
 POST {{baseUrl}}/api/workflow-attributes
 Authorization: Bearer {{catalogAdmin.response.body.$.accessToken}}
 Content-Type: application/json
@@ -32,7 +35,8 @@ Content-Type: application/json
 GET {{baseUrl}}/api/workflow-attributes?definitionId={{definitionId}}
 Authorization: Bearer {{catalogAdmin.response.body.$.accessToken}}
 
-### Create the native Elsa family using YOUR definition_id; attributes come from the table
+### Create the native Elsa family using YOUR definition_id
+# The approval condition maps claimAmount from the catalog and makes it required.
 # John is already returned by the username demo master. No registration is needed.
 # @name catalogDraft
 POST {{baseUrl}}/api/workflow-configurations
@@ -48,7 +52,11 @@ Content-Type: application/json
     "stages": [{
       "key": "A", "title": "John approval",
       "assignment": { "policy": "Specific", "members": ["external:username-demo:U001"], "userId": "external:username-demo:U001" },
-      "approveTo": { "kind": "Approved" }, "rejectTo": { "kind": "Rejected" }
+      "approveTo": { "kind": "REJECTED" }, "rejectTo": { "kind": "Rejected" },
+      "approveRules": [{
+        "when": { "attribute": "claimAmount", "operator": "GreaterThan", "value": 5000 },
+        "destination": { "kind": "Approved" }
+      }]
     }]
   }
 }
@@ -61,14 +69,10 @@ Content-Type: application/json
 
 { "expectedRevision": {{catalogDraft.response.body.$.revision}} }
 
-### Internal user starts the instance with ONLY active attributes
+### Internal user starts the instance with the mapped conditional attributes
+# After execution, continue with John's native task requests in External-Masters.http.
 POST {{baseUrl}}/elsa/api/workflow-definitions/{{definitionId}}/execute
 Authorization: Bearer {{catalogAdmin.response.body.$.accessToken}}
 Content-Type: application/json
 
 { "input": { "attributes": { "claimAmount": 6000 } } }
-
-# Continue using John's native task requests from External-Masters.http.
-# Reusing definition_id with id=0 returns 409. To edit, POST the existing configuration id
-# and expectedRevision; definition_id cannot change. Catalog-backed edits reload active fields.
-# Published/active instances retain their snapshot; next-draft reloads the current active master.

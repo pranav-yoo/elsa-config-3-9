@@ -24,18 +24,19 @@ public sealed class TicketFormProvider : IUserTaskFormProvider
         try
         {
             TicketJson.Require(data.ValueKind == JsonValueKind.Object, "Supply a JSON data object.");
+            var decision = TaskActionKeys.Parse(actionKey);
             if (form.Requested.Key == "correction")
             {
-                TicketJson.Require(actionKey == "Resubmit" && data.TryGetProperty("attributes", out _), "Supply attributes with Resubmit.");
+                TicketJson.Require(decision == TaskDecision.Resubmit && data.TryGetProperty("attributes", out _), "Supply attributes with RESUBMIT.");
                 TicketJson.Require(data.EnumerateObject().All(p => p.Name == "attributes"), "Unknown correction field.");
                 var configuration = TicketJson.Read<TicketConfiguration>(form.Requested.Binding!);
                 TicketJson.ValidateAttributes(configuration.Definition, data.GetProperty("attributes").Deserialize<Dictionary<string, JsonElement>>(TicketJson.Options)!);
             }
             else
             {
-                TicketJson.Require(actionKey is "Approve" or "Reject", "Unknown review action.");
+                TicketJson.Require(decision is TaskDecision.Approve or TaskDecision.Reject, "Unknown review action.");
                 TicketJson.Require(data.EnumerateObject().All(p => p.Name is "reason" or "comment"), "Only reason/comment are accepted during review; attributes are frozen.");
-                if (actionKey == "Reject")
+                if (decision == TaskDecision.Reject)
                     TicketJson.Require(data.TryGetProperty("reason", out var reason) && reason.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(reason.GetString()), "Rejection requires a reason.");
                 foreach (var field in data.EnumerateObject()) TicketJson.Require(field.Value.ValueKind == JsonValueKind.String, "Reason/comment must be strings.");
             }

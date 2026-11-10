@@ -213,7 +213,7 @@ Content-Type: application/json
   "operationId": "db9f4399-c50e-4afa-9b80-8d2a3a3c3c39",
   "expectedRevision": 2,
   "data": {"comment": "Initial checks passed"},
-  "actionKey": "Approve"
+  "actionKey": "APPROVE"
 }
 ```
 
@@ -233,7 +233,7 @@ Captured HTTP 202. Response excerpt; fields outside the excerpt are omitted. IDs
 }
 ```
 
-actionKey is case-sensitive: Approve or Reject for review tasks, Resubmit for correction tasks. data is the form payload. During review, only string reason/comment fields are allowed; data={} is valid for approval. Reject requires a non-empty reason.
+Use the exact `actions[].key` from the task response as `actionKey`. New review tasks expose `APPROVE` and `REJECT`. Correction tasks expose `RESUBMIT`. During review, only string reason and comment fields are allowed. An empty data object is valid for approval. Rejection requires a non-empty reason.
 
 An accepted completion can return HTTP 202 with status=accepted and task.status=Completing while Elsa resumes the workflow. Poll the task or instance and list the next stage task. A successful acceptance is not yet proof that the next stage was created.
 
@@ -286,7 +286,7 @@ Content-Type: application/json
   "operationId": "97898eb4-6cad-4e84-859c-df3a0ee60a79",
   "expectedRevision": 1,
   "data": {"reason": "High-value claim declined"},
-  "actionKey": "Reject"
+  "actionKey": "REJECT"
 }
 ```
 
@@ -342,7 +342,7 @@ Content-Type: application/json
   "operationId": "347f9782-b281-46f6-9815-c400c4a917cf",
   "expectedRevision": 2,
   "data": {"reason": "Please correct the claim amount"},
-  "actionKey": "Reject"
+  "actionKey": "REJECT"
 }
 ```
 
@@ -362,7 +362,7 @@ Captured HTTP 202. Response excerpt; fields outside the excerpt are omitted. IDs
 }
 ```
 
-Log in as requester and retrieve the assigned Correct and resubmit Expense Claim task. Use Resubmit and supply the complete attributes object.
+Log in as requester and retrieve the assigned Correct and resubmit Expense Claim task. Use `RESUBMIT` and supply the complete attributes object.
 
 6.2 Requester changes 6000 to 4000
 
@@ -377,7 +377,7 @@ Content-Type: application/json
   "operationId": "9f33ab33-2345-442e-a221-325aa0eb4854",
   "expectedRevision": 1,
   "data": {"attributes": {"claimAmount": 4000, "lastName": "Shah", "firstName": "Pranav"}},
-  "actionKey": "Resubmit"
+  "actionKey": "RESUBMIT"
 }
 ```
 
@@ -456,7 +456,7 @@ Content-Type: application/json
   "operationId": "1e08551c-2454-4d85-92ea-b8fb2aa1d23b",
   "expectedRevision": 2,
   "data": {},
-  "actionKey": "Reject"
+  "actionKey": "REJECT"
 }
 ```
 

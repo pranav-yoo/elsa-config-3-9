@@ -171,7 +171,7 @@ Content-Type: application/json
 {
   "expectedRevision": {{aDetail.response.body.$.revision}},
   "operationId": "{{$guid}}",
-  "actionKey": "Approve",
+  "actionKey": "APPROVE",
   "data": {
     "comment": "A reviewed and approved"
   }
@@ -222,7 +222,7 @@ Content-Type: application/json
 {
   "expectedRevision": {{bDetail.response.body.$.revision}},
   "operationId": "{{$guid}}",
-  "actionKey": "Approve",
+  "actionKey": "APPROVE",
   "data": {
     "comment": "B reviewed and approved"
   }
@@ -261,7 +261,7 @@ Content-Type: application/json
 {
   "expectedRevision": {{cDetail.response.body.$.revision}},
   "operationId": "{{$guid}}",
-  "actionKey": "Approve",
+  "actionKey": "APPROVE",
   "data": {
     "comment": "C reviewed and approved"
   }
@@ -300,7 +300,7 @@ Content-Type: application/json
 {
   "expectedRevision": {{dDetail.response.body.$.revision}},
   "operationId": "{{$guid}}",
-  "actionKey": "Approve",
+  "actionKey": "APPROVE",
   "data": {
     "comment": "D reviewed and approved"
   }
@@ -368,7 +368,7 @@ Content-Type: application/json
 {
   "expectedRevision": {{aDetail.response.body.$.revision}},
   "operationId": "{{$guid}}",
-  "actionKey": "Reject",
+  "actionKey": "REJECT",
   "data": {
     "reason": "A: please correct/review the claim"
   }
@@ -383,7 +383,7 @@ Content-Type: application/json
 {
   "expectedRevision": {{bDetail.response.body.$.revision}},
   "operationId": "{{$guid}}",
-  "actionKey": "Reject",
+  "actionKey": "REJECT",
   "data": {
     "reason": "B: please correct/review the claim"
   }
@@ -398,7 +398,7 @@ Content-Type: application/json
 {
   "expectedRevision": {{cDetail.response.body.$.revision}},
   "operationId": "{{$guid}}",
-  "actionKey": "Reject",
+  "actionKey": "REJECT",
   "data": {
     "reason": "C: please correct/review the claim"
   }
@@ -413,7 +413,7 @@ Content-Type: application/json
 {
   "expectedRevision": {{dDetail.response.body.$.revision}},
   "operationId": "{{$guid}}",
-  "actionKey": "Reject",
+  "actionKey": "REJECT",
   "data": {
     "reason": "D: please correct/review the claim"
   }
@@ -442,7 +442,7 @@ Content-Type: application/json
 {
   "expectedRevision": {{correctionDetail.response.body.$.revision}},
   "operationId": "{{$guid}}",
-  "actionKey": "Resubmit",
+  "actionKey": "RESUBMIT",
   "data": {
     "attributes": {
       "firstName": "Pranav",

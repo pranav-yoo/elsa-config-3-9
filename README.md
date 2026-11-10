@@ -42,15 +42,29 @@ Run requests one at a time; use named responses within a file and copy marked ID
 
 `POST /api/workflow-attributes` creates a master field (missing/zero `id`) or updates one (positive `id`). Each row belongs to a `definitionId` and has `status: Active` or `Inactive`. `GET /api/workflow-attributes?definitionId=expense-claim-v1` lists that family's master records.
 
-Pass `definition_id` in `POST /api/workflow-configurations` to create Elsa's workflow with that exact ID. Inline `configuration.attributes` may be omitted and are ignored for this path: the server loads only Active rows from `Application.WorkflowAttributes` for that ID. An existing ID returns 409; use the existing configuration ID or next-draft API for edits/versions. Definition IDs cannot change on updates.
+Pass `definition_id` in `POST /api/workflow-configurations` to create Elsa's workflow with that exact ID. Supply the attribute key in `when.attribute` for an approval route or conditional assignment. The server maps those keys to active rows from `Application.WorkflowAttributes` under the same definition ID. Missing, inactive or other-definition references return 400. Each mapped field is mandatory. An existing definition ID returns 409. Definition IDs cannot change on updates.
 
-Catalog-backed draft edits and next-draft creation reload active fields even when an update omits `definition_id`. Publishing freezes the saved draft snapshot; later master changes do not alter published versions or running instances. References to inactive/missing fields in conditions fail FluentValidation. Existing clients that never supplied `definition_id` retain the inline-attribute contract.
+The configuration request contains the name, start stage and stages. The response includes the resolved attribute snapshot. Draft saves and next-draft creation resolve the current conditional fields. Publishing freezes that snapshot for running instances. Workflows without conditions have an empty attribute snapshot. Send the mapped values in `input.attributes` at execution and in `data.attributes` when resubmitting corrections. Your application can store its section and subsection data separately.
 
 The attribute table and catalog-source flag are installed by migration `202611020001_WorkflowAttributes` on persistent startup. Run `python Tests/AttributeCatalog.py --base-url http://localhost:5000` to verify the named-definition flow and native approval.
 
 POST /api/workflow-configurations creates for absent/null/zero id; positive IDs update drafts with expectedRevision. Published snapshots are immutable. Stale revisions return 409; unknown positive IDs return 404. Execution, tasks, instances and history use native Elsa APIs. No custom PUT or /api/tickets endpoint exists.
 
 Above 5000, approval passes through C; 5000 and below bypass C. Rejection: A returns to correction/A; B returns to A; C ends Rejected; D returns to correction/D. Resubmission uses the same instance and preserves attribute revisions. Read workflowState.output.ticketOutcome for Approved/Rejected; technical Finished is not a business outcome. Poll after 202 completion. Reuse the original operationId/body/revision when retrying one command.
+
+New review tasks expose `APPROVE` and `REJECT`. Correction tasks expose `RESUBMIT`. Use the exact `actions[].key` returned by task detail when sending `actionKey`, including for older pending tasks.
+
+## Parallel approvals
+
+Add `"parallelWith": ["D"]` to stage C. Routes into C open both C and D as separate Elsa tasks. The first approval follows C's approval route and cancels unanswered tasks. If every branch rejects, the group follows C's rejection route. Define C and D as regular stages with their own assignments and matching default destinations. Put shared approval rules on C and route to C to enter the group.
+
+Run the [parallel approval requests](Parallel-Approvals.http) for each decision order. Use `python Tests/ParallelWorkflows.py` for the live PostgreSQL checks, then restart the API and repeat with `--verify-restart`.
+
+## Read-only stage access
+
+Add `"viewableByStages": ["D"]` to stage C. When C's task opens, the eligible members of D can see it immediately. Use `GET /elsa/api/user-tasks?scope=observed` to list tasks and the native detail and events endpoints to read them. The viewer grant follows that task into history. Use `allowedActions` to decide which controls to show. Observing a task grants no claim, completion, or management permission.
+
+The observed list supports `workflowInstanceId`, `status`, `limit` (1–50), `cursor`, and `includeTotalCount`. Run [Observed-Tasks.http](Observed-Tasks.http) to test sequential read-only access. For an existing definition, publish a new version with the setting to apply it to new task snapshots.
 
 ## External members
 
@@ -82,4 +96,4 @@ python Tests/ConfiguredWorkflows.py --base-url http://localhost:5000 --verify-pr
 
 Checks cover conditional routing, correction, exact comparisons, cycles, concurrency, permissions, provider isolation, version pinning and restart recovery. docs/build_configured_requests.py regenerates the local HTTP collections.
 
-Parallel thresholds, round robin, submission outbox, frontend, attachments, notifications and SLA escalation remain deferred. Legacy request files/definitions describe earlier research; legacy activities remain registered for persisted instances.
+All-approver and quorum policies, round robin, submission outbox, frontend, attachments, notifications and SLA escalation remain deferred. Legacy request files and definitions describe earlier research. Legacy activities remain registered for persisted instances.

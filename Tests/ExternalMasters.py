@@ -61,7 +61,10 @@ def assigned(instance, jwt):
 def approve(saved, jwt):
     task = assigned(saved['instanceId'], jwt)
     assert task['id'] == saved['taskId'] and task['assignee']['id'] == saved['participantId']
-    api('POST', '/elsa/api/user-tasks/' + task['id'] + '/complete', {'expectedRevision': task['revision'], 'operationId': str(uuid.uuid4()), 'actionKey': 'Approve', 'data': {}}, jwt)
+    detail = api('GET', '/elsa/api/user-tasks/' + task['id'], token=jwt)
+    approve_key = next(action['key'] for action in detail['actions'] if action['key'].upper() == 'APPROVE')
+    assert args.verify_restart or approve_key == 'APPROVE'
+    api('POST', '/elsa/api/user-tasks/' + task['id'] + '/complete', {'expectedRevision': detail['revision'], 'operationId': str(uuid.uuid4()), 'actionKey': approve_key, 'data': {}}, jwt)
     for _ in range(60):
         instance = api('GET', '/elsa/api/workflow-instances/' + saved['instanceId'], token=admin)
         if instance['status'] == 'Finished': break
@@ -80,14 +83,14 @@ saved = {}
 for provider in directories:
     member = directories[provider][0]
     jwt = token(provider, '  JOHN  ' if provider == 'username-demo' else ' JOHN@EXAMPLE.TEST ')
-    setup = {'name': 'Master John ' + provider, 'attributes': [{'key': 'claimAmount', 'type': 'Decimal', 'required': True}], 'startStage': 'A', 'stages': [{'key': 'A', 'title': 'John approval', 'assignment': {'policy': 'Specific', 'members': [member['participantId']], 'userId': member['participantId']}, 'approveTo': {'kind': 'Approved'}, 'rejectTo': {'kind': 'Rejected'}}]}
+    setup = {'name': 'Master John ' + provider, 'startStage': 'A', 'stages': [{'key': 'A', 'title': 'John approval', 'assignment': {'policy': 'Specific', 'members': [member['participantId']], 'userId': member['participantId']}, 'approveTo': {'kind': 'Approved'}, 'rejectTo': {'kind': 'Rejected'}}]}
     config = api('POST', '/api/workflow-configurations', {'id': 0, 'configuration': setup}, admin)
     config = api('POST', f'/api/workflow-configurations/{config["id"]}/publish', {'expectedRevision': config['revision']}, admin)
     # Internal users own submission. External employees cannot create instances, even if their JWT says admin.
     execution = f'/elsa/api/workflow-definitions/{config["definitionId"]}/execute'
-    api('POST', execution, {'input': {'attributes': {'claimAmount': 6000}}}, jwt, (403,))
+    api('POST', execution, {}, jwt, (403,))
     def start():
-        result = api('POST', execution, {'correlationId': 'MASTER-' + str(uuid.uuid4()), 'input': {'attributes': {'claimAmount': 6000}}}, admin)['workflowState']
+        result = api('POST', execution, {'correlationId': 'MASTER-' + str(uuid.uuid4())}, admin)['workflowState']
         assert result['subStatus'] == 'Suspended', result.get('incidents')
         task = assigned(result['id'], jwt)
         assert task['assignee']['id'] == member['participantId']

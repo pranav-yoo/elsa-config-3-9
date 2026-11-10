@@ -37,6 +37,26 @@ public sealed class WorkflowConfigurationValidator : AbstractValidator<WorkflowS
             if (setup.Attributes.Select(x => x.Key).Distinct().Count() != setup.Attributes.Length) Error("Duplicate attribute keys.");
             if (setup.Stages.Select(x => x.Key).Distinct().Count() != setup.Stages.Length) { Error("Duplicate stage keys."); return; }
             if (!setup.Stages.Any(x => x.Key == setup.StartStage)) Error("Unknown start stage.");
+            var parallelMembers = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var entry in setup.Stages.Where(stage => stage.ParallelWith is not null))
+            {
+                if (entry.ParallelWith!.Length == 0) Error($"Parallel stage '{entry.Key}' must name at least one other stage.");
+                foreach (var key in entry.ParallelWith)
+                {
+                    var member = setup.Stages.FirstOrDefault(stage => stage.Key == key);
+                    if (string.IsNullOrEmpty(key) || member is null || member == entry)
+                    {
+                        Error($"Invalid parallel stage '{key}' in '{entry.Key}'.");
+                        continue;
+                    }
+                    if (!parallelMembers.Add(key)) Error($"Parallel stage '{key}' is listed more than once.");
+                    if (member.ParallelWith is not null) Error($"Parallel stage '{key}' cannot start another group.");
+                    if (member.ApproveTo != entry.ApproveTo || member.RejectTo != entry.RejectTo)
+                        Error($"Parallel stage '{key}' must match the approval and rejection destinations of '{entry.Key}'.");
+                    if (member.ApproveRules is { Length: > 0 }) Error($"Put parallel approval rules on '{entry.Key}', not '{key}'.");
+                }
+            }
+            if (parallelMembers.Contains(setup.StartStage)) Error("Start at the entry stage of the parallel group.");
             var fields = new AttributeDefinitionValidator();
             foreach (var field in setup.Attributes)
                 foreach (var failure in fields.Validate(field).Errors) Error(failure.ErrorMessage);
@@ -44,20 +64,27 @@ public sealed class WorkflowConfigurationValidator : AbstractValidator<WorkflowS
             {
                 if (destination is null || !Enum.IsDefined(destination.Kind)) return false;
                 if (destination.Kind is DestinationKind.Stage or DestinationKind.Correction)
-                    return (!approve || destination.Kind != DestinationKind.Correction) && setup.Stages.Any(x => x.Key == destination.StageKey);
+                    return (!approve || destination.Kind != DestinationKind.Correction)
+                        && destination.StageKey is { } key && !parallelMembers.Contains(key)
+                        && setup.Stages.Any(x => x.Key == key);
                 return string.IsNullOrEmpty(destination.StageKey);
             }
             void ConditionValid(AttributeCondition? condition)
             {
                 if (condition is null) { Error("A condition is required."); return; }
                 var field = setup.Attributes.FirstOrDefault(x => x.Key == condition.Attribute);
-                if (field is null || !Enum.IsDefined(condition.Operator)) { Error("Unknown condition field/operator."); return; }
+                if (field is null) { Error($"Condition attribute '{condition.Attribute}' is missing or inactive for this definition ID."); return; }
+                if (!Enum.IsDefined(condition.Operator)) { Error("Unknown condition operator."); return; }
                 if (!AttributeRules.IsValid(field with { Required = true, Minimum = null, Maximum = null, MaxLength = null }, condition.Value)) Error($"Invalid condition value for {field.Key}.");
                 if (condition.Operator is not (ConditionOperator.Equals or ConditionOperator.NotEquals) && field.Type is not (AttributeType.Decimal or AttributeType.Integer or AttributeType.Date)) Error("Ordered comparisons require a number or date.");
             }
             foreach (var stage in setup.Stages)
             {
                 if (!Key(stage.Key) || string.IsNullOrWhiteSpace(stage.Title)) Error("A valid stage key/title is required.");
+                var viewerStages = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var key in stage.ViewableByStages ?? [])
+                    if (string.IsNullOrWhiteSpace(key) || key == stage.Key || !viewerStages.Add(key) || !setup.Stages.Any(other => other.Key == key))
+                        Error($"Invalid viewer stage '{key}' on '{stage.Key}'. Use distinct keys of other stages.");
                 if (!DestinationValid(stage.ApproveTo, true) || !DestinationValid(stage.RejectTo, false)) Error($"Invalid destination in {stage.Key}.");
                 var assignment = stage.Assignment;
                 if (assignment is null || assignment.Members is null || !Enum.IsDefined(assignment.Policy)) { Error("An assignment policy and members array are required."); continue; }
@@ -96,7 +123,8 @@ public sealed class WorkflowConfigurationValidator : AbstractValidator<WorkflowS
                 if (terminates) complete.Add(key);
                 return terminates;
             }
-            if (!setup.Stages.All(stage => Terminates(stage.Key))) Error("Approval cycles are not supported.");
+            if (!setup.Stages.Where(stage => !parallelMembers.Contains(stage.Key)).All(stage => Terminates(stage.Key)))
+                Error("Approval cycles are not supported.");
         });
     }
 }

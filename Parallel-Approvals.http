@@ -1,0 +1,147 @@
+# Run requests one at a time. Change definitionId before creating another demo definition.
+# Generate demo tokens with New-TestAccessToken.ps1 -Provider Username -Identity bob|clara|dan|john.
+# Paste the four separate tokens below. The internal admin configures, publishes and starts.
+@baseUrl = http://localhost:5000
+@definitionId = parallel-claim-v1
+@bobToken = eyJhbGciOiJodHRwOi8vd3d3LnczLm9yZy8yMDAxLzA0L3htbGRzaWctbW9yZSNobWFjLXNoYTI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwOi8vZWxzYS5hcGkiLCJpc3MiOiJodHRwOi8vZWxzYS5hcGkiLCJleHAiOjE3OTQzMTM2MTMsInN1YiI6ImM3M2I0YjY4ZDczZDZlMmIiLCJuYW1lIjoiY29uZmlndXJlZC1ib2IiLCJlbHNhOnBlcm1pc3Npb25fc3RhbXAiOiI5QjZGOTU3NzM2QkZENUE3IiwiaHR0cDovL3NjaGVtYXMubWljcm9zb2Z0LmNvbS93cy8yMDA4LzA2L2lkZW50aXR5L2NsYWltcy9yb2xlIjoiQXBwcm92ZXIiLCJwZXJtaXNzaW9ucyI6WyJ1c2VyLXRhc2tzOnZpZXciLCJ1c2VyLXRhc2tzOmNsYWltIiwidXNlci10YXNrczpjb21wbGV0ZSIsIndvcmtmbG93cy9pbnN0YW5jZXM6dmlldyJdLCJ0b2tlbl91c2UiOiJhY2Nlc3MiLCJpYXQiOjE3OTQzMTI3MTMsIm5iZiI6MTc5NDMxMjcxM30.zmdryigJQ2_l90qTbYhJAmmWn026xYWLZRamUXwYICo
+@claraToken = eyJhbGciOiJodHRwOi8vd3d3LnczLm9yZy8yMDAxLzA0L3htbGRzaWctbW9yZSNobWFjLXNoYTI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwOi8vZWxzYS5hcGkiLCJpc3MiOiJodHRwOi8vZWxzYS5hcGkiLCJleHAiOjE3OTQzMTM2ODksInN1YiI6IjU3Y2RmZjAxNWIwOTYyOWIiLCJuYW1lIjoiY29uZmlndXJlZC1jbGFyYSIsImVsc2E6cGVybWlzc2lvbl9zdGFtcCI6IjlCNkY5NTc3MzZCRkQ1QTciLCJodHRwOi8vc2NoZW1hcy5taWNyb3NvZnQuY29tL3dzLzIwMDgvMDYvaWRlbnRpdHkvY2xhaW1zL3JvbGUiOiJBcHByb3ZlciIsInBlcm1pc3Npb25zIjpbInVzZXItdGFza3M6dmlldyIsInVzZXItdGFza3M6Y2xhaW0iLCJ1c2VyLXRhc2tzOmNvbXBsZXRlIiwid29ya2Zsb3dzL2luc3RhbmNlczp2aWV3Il0sInRva2VuX3VzZSI6ImFjY2VzcyIsImlhdCI6MTc5NDMxMjc4OSwibmJmIjoxNzk0MzEyNzg5fQ.See5c18hQZASqL-Or7ea5gaFAZdSmgj2zrZb9SSFu54
+@danToken = eyJhbGciOiJodHRwOi8vd3d3LnczLm9yZy8yMDAxLzA0L3htbGRzaWctbW9yZSNobWFjLXNoYTI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwOi8vZWxzYS5hcGkiLCJpc3MiOiJodHRwOi8vZWxzYS5hcGkiLCJleHAiOjE3OTQzMTM5NDcsInN1YiI6ImI4ZDIyN2VlYzdmOWI4ZTkiLCJuYW1lIjoiY29uZmlndXJlZC1kYW4iLCJlbHNhOnBlcm1pc3Npb25fc3RhbXAiOiI5QjZGOTU3NzM2QkZENUE3IiwiaHR0cDovL3NjaGVtYXMubWljcm9zb2Z0LmNvbS93cy8yMDA4LzA2L2lkZW50aXR5L2NsYWltcy9yb2xlIjoiQXBwcm92ZXIiLCJwZXJtaXNzaW9ucyI6WyJ1c2VyLXRhc2tzOnZpZXciLCJ1c2VyLXRhc2tzOmNsYWltIiwidXNlci10YXNrczpjb21wbGV0ZSIsIndvcmtmbG93cy9pbnN0YW5jZXM6dmlldyJdLCJ0b2tlbl91c2UiOiJhY2Nlc3MiLCJpYXQiOjE3OTQzMTMwNDcsIm5iZiI6MTc5NDMxMzA0N30.YP0nxbAazIlgdykiIl1_8f9rF095RsrDhptxIVCXwus
+@johnToken = PASTE_JOHN_TOKEN
+
+### 1. Log in as internal admin
+# @name parallelAdmin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{ "username": "admin", "password": "password" }
+
+### 2. Create B → (C and D) → E
+# C owns the routing. D keeps the same default routes and has its own assignment.
+# @name parallelDraft
+POST {{baseUrl}}/api/workflow-configurations
+Authorization: Bearer {{parallelAdmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "id": 0,
+  "definition_id": "{{definitionId}}",
+  "configuration": {
+    "name": "Parallel claim review",
+    "startStage": "B",
+    "stages": [
+      {
+        "key": "B", "title": "B - Initial review",
+        "assignment": { "policy": "Specific", "members": ["c73b4b68d73d6e2b"], "userId": "c73b4b68d73d6e2b" },
+        "approveTo": { "kind": "Stage", "stageKey": "C" },
+        "rejectTo": { "kind": "Rejected" }
+      },
+      {
+        "key": "C", "title": "C - Clara review", "parallelWith": ["D"],
+        "assignment": { "policy": "Specific", "members": ["57cdff015b09629b"], "userId": "57cdff015b09629b" },
+        "approveTo": { "kind": "Stage", "stageKey": "E" },
+        "rejectTo": { "kind": "Rejected" }
+      },
+      {
+        "key": "D", "title": "D - Dan review",
+        "assignment": { "policy": "Specific", "members": ["b8d227eec7f9b8e9"], "userId": "b8d227eec7f9b8e9" },
+        "approveTo": { "kind": "Stage", "stageKey": "E" },
+        "rejectTo": { "kind": "Rejected" }
+      },
+      {
+        "key": "E", "title": "E - Final review",
+        "assignment": { "policy": "Specific", "members": ["51d6588a9c3881d8"], "userId": "51d6588a9c3881d8" },
+        "approveTo": { "kind": "Approved" },
+        "rejectTo": { "kind": "Rejected" }
+      }
+    ]
+  }
+}
+
+### 3. Publish
+POST {{baseUrl}}/api/workflow-configurations/{{parallelDraft.response.body.$.id}}/publish
+Authorization: Bearer {{parallelAdmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{ "expectedRevision": {{parallelDraft.response.body.$.revision}} }
+
+### 4. Start a fresh instance for each scenario
+# @name parallelRun
+POST {{baseUrl}}/elsa/api/workflow-definitions/{{definitionId}}/execute
+Authorization: Bearer {{parallelAdmin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{ "correlationId": "PARALLEL-{{$guid}}" }
+
+### 5. Bob finds B
+# @name bParallelTask
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&status=Assigned&workflowInstanceId={{parallelRun.response.body.$.workflowState.id}}
+Authorization: Bearer {{bobToken}}
+
+### 6. Bob approves B
+POST {{baseUrl}}/elsa/api/user-tasks/{{bParallelTask.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{bobToken}}
+Content-Type: application/json
+
+{ "expectedRevision": {{bParallelTask.response.body.$.items[0].revision}}, "operationId": "{{$guid}}", "actionKey": "APPROVE", "data": {} }
+
+### 7. Clara finds C
+# @name cParallelTask
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&status=Assigned&workflowInstanceId={{parallelRun.response.body.$.workflowState.id}}
+Authorization: Bearer {{claraToken}}
+
+### 8. Dan finds D
+# @name dParallelTask
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&status=Assigned&workflowInstanceId={{parallelRun.response.body.$.workflowState.id}}
+Authorization: Bearer {{danToken}}
+
+### 9A. C approves first
+# D is canceled. Try 9B on the same instance to see a late completion rejected.
+POST {{baseUrl}}/elsa/api/user-tasks/{{cParallelTask.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{claraToken}}
+Content-Type: application/json
+
+{ "expectedRevision": {{cParallelTask.response.body.$.items[0].revision}}, "operationId": "{{$guid}}", "actionKey": "APPROVE", "data": {} }
+
+### 9B. D approves first, or after C rejects
+# On a fresh instance, D can win immediately. After 9C, D can still approve.
+POST {{baseUrl}}/elsa/api/user-tasks/{{dParallelTask.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{danToken}}
+Content-Type: application/json
+
+{ "expectedRevision": {{dParallelTask.response.body.$.items[0].revision}}, "operationId": "{{$guid}}", "actionKey": "APPROVE", "data": {} }
+
+### 9C. C rejects first
+# D remains open. Choose 9B to advance or 9D to reject the entire group.
+POST {{baseUrl}}/elsa/api/user-tasks/{{cParallelTask.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{claraToken}}
+Content-Type: application/json
+
+{ "expectedRevision": {{cParallelTask.response.body.$.items[0].revision}}, "operationId": "{{$guid}}", "actionKey": "REJECT", "data": { "reason": "Needs supporting evidence" } }
+
+### 9D. D rejects after C rejects
+# The instance ends as Rejected, with no E task.
+POST {{baseUrl}}/elsa/api/user-tasks/{{dParallelTask.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{danToken}}
+Content-Type: application/json
+
+{ "expectedRevision": {{dParallelTask.response.body.$.items[0].revision}}, "operationId": "{{$guid}}", "actionKey": "REJECT", "data": { "reason": "Claim declined" } }
+
+### 10. Inspect all task statuses as admin
+GET {{baseUrl}}/elsa/api/user-tasks?scope=all&workflowInstanceId={{parallelRun.response.body.$.workflowState.id}}
+Authorization: Bearer {{parallelAdmin.response.body.$.accessToken}}
+
+### 11. John finds E after either approval
+# @name eParallelTask
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&status=Assigned&workflowInstanceId={{parallelRun.response.body.$.workflowState.id}}
+Authorization: Bearer {{johnToken}}
+
+### 12. John approves E
+POST {{baseUrl}}/elsa/api/user-tasks/{{eParallelTask.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{johnToken}}
+Content-Type: application/json
+
+{ "expectedRevision": {{eParallelTask.response.body.$.items[0].revision}}, "operationId": "{{$guid}}", "actionKey": "APPROVE", "data": {} }
+
+### 13. Read the business outcome
+GET {{baseUrl}}/elsa/api/workflow-instances/{{parallelRun.response.body.$.workflowState.id}}
+Authorization: Bearer {{parallelAdmin.response.body.$.accessToken}}

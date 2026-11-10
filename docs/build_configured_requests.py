@@ -6,6 +6,7 @@ source=(ROOT/'Tests/ConfiguredWorkflows.py').read_text()
 namespace={'ids':{name:'{{'+name+'Id}}' for name in ['alice','amy','bob','clara','dan']}}
 exec(source[source.index('def fixture():'):source.index('\ndef create(')],namespace)
 setup=namespace['fixture']()
+amount=next(field for field in setup.pop('attributes') if field['key']=='claimAmount')
 
 def request(title,name,method,path,body=None,token=None,comment=''):
     text='\n### '+title+'\n'
@@ -50,15 +51,21 @@ auth+=request('John lists assigned tasks','johnTasks','GET','/elsa/api/user-task
 
 config=header+'''# Provision using Authentication.http first; copy the generated IDs below.
 # Do not substitute usernames, task IDs or workflow instance IDs for these employee IDs.
+@definitionId = configured-expense-v1
 '''+''.join('@'+name+'Id = PASTE_'+name.upper()+'_USER_ID\n' for name in namespace['ids'])
 config+=login('configurator','configured-configurator')
 configToken='configuratorLogin.response.body.$.accessToken'
-config+=request('Create configuration + native Elsa draft','createConfiguration','POST','/api/workflow-configurations',{'id':0,'configuration':setup},configToken,comment='Missing/zero id creates. Response contains id, definitionId, definitionVersionId and revision. Conditions are ordered; the first match wins.')
+config+=request('Add the conditional attribute to the catalog','createAmountField','POST','/api/workflow-attributes',{'definitionId':'{{definitionId}}','attribute':amount},configToken,comment='Reuse the existing field if this definition ID already has claimAmount. The workflow makes it mandatory.')
+config+=request('Create configuration + native Elsa draft','createConfiguration','POST','/api/workflow-configurations',{'id':0,'definition_id':'{{definitionId}}','configuration':setup},configToken,comment='Missing/zero id creates. Conditions are ordered; the first match wins. The API maps claimAmount from the catalog.')
 config+=request('Read draft','readConfiguration','GET','/api/workflow-configurations/{{createConfiguration.response.body.$.id}}',token=configToken)
 config+=request('Update same draft using POST','updateConfiguration','POST','/api/workflow-configurations','''{
   "id": {{readConfiguration.response.body.$.id}},
   "expectedRevision": {{readConfiguration.response.body.$.revision}},
-  "configuration": {{readConfiguration.response.body.$.configuration}}
+  "configuration": {
+    "name": "{{readConfiguration.response.body.$.configuration.name}}",
+    "startStage": "{{readConfiguration.response.body.$.configuration.startStage}}",
+    "stages": {{readConfiguration.response.body.$.configuration.stages}}
+  }
 }''',configToken,comment='No PUT API. Missing positive id returns 404. Stale revision or editing a published version returns 409. Object references are intentionally unquoted JSON.')
 config+=request('Validate without publishing','validateConfiguration','POST','/api/workflow-configurations/{{createConfiguration.response.body.$.id}}/validate',{},configToken,comment='200 valid=true; FluentValidation failures return 400 with field/message errors.')
 config+=request('Publish exact Elsa version','publishConfiguration','POST','/api/workflow-configurations/{{createConfiguration.response.body.$.id}}/publish','{"expectedRevision": {{updateConfiguration.response.body.$.revision}}}',configToken,comment='Copy returned definitionId into Ticket-Workflow.http. This version is now immutable.')
@@ -72,26 +79,26 @@ flow=header+'''# Paste the published definitionId from Workflow-Configuration.ht
 @definitionId = PASTE_PUBLISHED_DEFINITION_ID
 '''
 for name in ['requester','alice','bob','clara','dan','supervisor']:flow+=login(name,'configured-'+name)
-flow+=request('Submit through native Elsa execute','startTicket','POST','/elsa/api/workflow-definitions/{{definitionId}}/execute',{'correlationId':'CLAIM-{{$guid}}','input':{'attributes':{'firstName':'Pranav','lastName':'Shah','claimAmount':6000}}},'requesterLogin.response.body.$.accessToken',comment='Expect workflowState.subStatus=Suspended. Requester is derived from your token. No /api/tickets endpoint exists.')
+flow+=request('Submit through native Elsa execute','startTicket','POST','/elsa/api/workflow-definitions/{{definitionId}}/execute',{'correlationId':'CLAIM-{{$guid}}','input':{'attributes':{'claimAmount':6000}}},'requesterLogin.response.body.$.accessToken',comment='Expect workflowState.subStatus=Suspended. Requester is derived from your token. Supply the conditional fields under input.attributes.')
 for stage,user,bucket in [('A','alice',True),('B','bob',True),('C','clara',False),('D','dan',False)]:
     prefix=stage.lower(); token=user+'Login.response.body.$.accessToken'; scope='available' if bucket else 'assigned'; status='Available' if bucket else 'Assigned'
     flow+=request(stage+': find current task',prefix+'Tasks','GET','/elsa/api/user-tasks?scope='+scope+'&status='+status+'&workflowInstanceId={{startTicket.response.body.$.workflowState.id}}&includeTotalCount=true',token=token,comment='Wait/retry until items is nonempty. Every stage/visit has a NEW task ID.')
     if bucket:flow+=request(stage+': claim ownership',prefix+'Claim','POST','/elsa/api/user-tasks/{{'+prefix+'Tasks.response.body.$.items[0].id}}/claim','{"expectedRevision": {{'+prefix+'Tasks.response.body.$.items[0].revision}}, "operationId": "{{$guid}}"}',token,comment='Native Elsa enforces one owner and revision conflicts.')
     flow+=request(stage+': read latest revision',prefix+'Detail','GET','/elsa/api/user-tasks/{{'+prefix+'Tasks.response.body.$.items[0].id}}',token=token)
-    flow+=request(stage+': approve',prefix+'Approve','POST','/elsa/api/user-tasks/{{'+prefix+'Tasks.response.body.$.items[0].id}}/complete','{"expectedRevision": {{'+prefix+'Detail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "Approve", "data": {"comment": "'+stage+' reviewed"}}',token,comment='May return 202 accepted/completing. Direct native API calls still pass through our FluentValidation form provider.')
+    flow+=request(stage+': approve',prefix+'Approve','POST','/elsa/api/user-tasks/{{'+prefix+'Tasks.response.body.$.items[0].id}}/complete','{"expectedRevision": {{'+prefix+'Detail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "APPROVE", "data": {"comment": "'+stage+' reviewed"}}',token,comment='May return 202 accepted/completing. Direct native API calls still pass through our FluentValidation form provider.')
 flow+=request('Read final instance','finishedInstance','GET','/elsa/api/workflow-instances/{{startTicket.response.body.$.workflowState.id}}',token='requesterLogin.response.body.$.accessToken',comment='Poll until status and subStatus are Finished. workflowState.output.ticketOutcome=Approved. Faulted/Cancelled are technical states, not rejection.')
 flow+=request('Read workflow journey','journey','GET','/elsa/api/workflow-instances/{{startTicket.response.body.$.workflowState.id}}/journal',token='requesterLogin.response.body.$.accessToken')
 flow+=request('Read stage A task audit','taskEvents','GET','/elsa/api/user-tasks/{{aTasks.response.body.$.items[0].id}}/events',token='aliceLogin.response.body.$.accessToken')
 flow+='# END MAIN SEQUENCE\n# ALTERNATIVES: use INSTEAD of that stage Approve on a fresh instance. Do not run all branches together.\n'
 for stage,user,outcome in [('A','alice','correction then A'),('B','bob','new A task'),('C','clara','terminal Rejected'),('D','dan','correction then D')]:
     prefix=stage.lower()
-    flow+=request('INSTEAD reject '+stage+' -> '+outcome,'reject'+stage,'POST','/elsa/api/user-tasks/{{'+prefix+'Tasks.response.body.$.items[0].id}}/complete','{"expectedRevision": {{'+prefix+'Detail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "Reject", "data": {"reason": "Please correct this request"}}',user+'Login.response.body.$.accessToken',comment='Read current revision first. A nonblank reason is mandatory. Earlier decisions remain in history.')
+    flow+=request('INSTEAD reject '+stage+' -> '+outcome,'reject'+stage,'POST','/elsa/api/user-tasks/{{'+prefix+'Tasks.response.body.$.items[0].id}}/complete','{"expectedRevision": {{'+prefix+'Detail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "REJECT", "data": {"reason": "Please correct this request"}}',user+'Login.response.body.$.accessToken',comment='Read current revision first. A nonblank reason is mandatory. Earlier decisions remain in history.')
 flow+=request('After A/D rejection: find requester correction','correctionTasks','GET','/elsa/api/user-tasks?scope=assigned&status=Assigned&workflowInstanceId={{startTicket.response.body.$.workflowState.id}}',token='requesterLogin.response.body.$.accessToken')
 flow+=request('Resubmit corrected attributes','resubmit','POST','/elsa/api/user-tasks/{{correctionTasks.response.body.$.items[0].id}}/complete','''{
   "expectedRevision": {{correctionTasks.response.body.$.items[0].revision}},
   "operationId": "{{$guid}}",
-  "actionKey": "Resubmit",
-  "data": {"attributes": {"firstName": "Pranav", "lastName": "Shah", "claimAmount": 4000}}
+  "actionKey": "RESUBMIT",
+  "data": {"attributes": {"claimAmount": 4000}}
 }''','requesterLogin.response.body.$.accessToken',comment='Same instance; attributeRevision increments. Supply the COMPLETE object. This fixture returns A to A and D to D. Repeat the applicable stage requests.')
 flow+='''\n# OPTIONAL supervisor reassignment for a task with no eligible initial assignee.
 @blockedTaskId = PASTE_UNASSIGNED_TASK_ID

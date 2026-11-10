@@ -3,11 +3,14 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Elsa.Common.Models;
+using Elsa.UserTasks.Contracts;
+using Elsa.UserTasks.Models;
 using Elsa.Workflows.Management;
 using Elsa.Workflows.Management.Filters;
 using FluentValidation;
 using IlWorkflow.Infrastructure.Configuration;
 using IlWorkflow.Infrastructure.Persistence;
+using IlWorkflow.Api.Workflows;
 using Microsoft.EntityFrameworkCore;
 
 namespace IlWorkflow.API.Middleware;
@@ -52,6 +55,12 @@ public sealed class WorkflowRequestGuard
             if (http.User.Identity?.IsAuthenticated != true) throw new ApiException(401, "A valid bearer token is required.");
             if (!string.IsNullOrEmpty(http.User.FindFirstValue("tenant"))) throw new ApiException(403, "This version supports the default organization only.");
             var supervisor = ConfigurationAccess.IsSupervisor(http.User);
+            if (parts.Length == 1 && parts[0] == "user-tasks" && HttpMethods.IsGet(http.Request.Method)
+                && string.Equals(http.Request.Query["scope"], "observed", StringComparison.OrdinalIgnoreCase))
+            {
+                await ListObservedTasksAsync(http);
+                return;
+            }
             // Elsa 3.9 keyword search includes Tags.Any(). Its PostgreSQL migration stores tags as
             // text JSON; the compatibility converter cannot translate that collection predicate.
             // Scope/status/instance/reference filters remain native and fully supported.
@@ -112,6 +121,13 @@ public sealed class WorkflowRequestGuard
                 if (!supervisor && (parts[0] != "workflow-definitions" || !HttpMethods.IsGet(http.Request.Method)))
                     throw new ApiException(403, "This engine operation is restricted. Use native task operations or POST execute.");
             }
+            if (parts[0] == "user-tasks" && parts.Length >= 3
+                && !HttpMethods.IsGet(http.Request.Method) && !HttpMethods.IsHead(http.Request.Method)
+                && http.RequestServices.GetService<ParallelTaskCommands>() is { } parallel)
+            {
+                await parallel.RunCommandAsync(parts[1], parts[2] == "complete", http.User, () => _next(http), http.RequestAborted);
+                return;
+            }
             await _next(http);
         }
         catch (ValidationException exception)
@@ -153,6 +169,43 @@ public sealed class WorkflowRequestGuard
             http.Request.Body = originalBody;
         }
     }
+    private static async Task ListObservedTasksAsync(HttpContext http)
+    {
+        // Elsa's query scope enum is fixed. Handle only this additional read scope and leave
+        // native list, detail, events and all task mutations on their existing endpoints.
+        var services = http.RequestServices;
+        var observed = services.GetService<ObservedUserTasks>()
+            ?? throw new ApiException(503, "Observed task lists require PostgreSQL.");
+        var ct = http.RequestAborted;
+        var actor = await services.GetRequiredService<IUserTaskIdentityResolver>().ResolveAsync(http.User, ct)
+            ?? throw new ApiException(403, "Task view permission is required.");
+        if (!ObservedTaskAccess.CanObserve(actor)) throw new ApiException(403, "Task view permission is required.");
+
+        var query = http.Request.Query;
+        if (query.Keys.Any(key => !ObservedQueryParameters.Contains(key)))
+            throw new ApiException(400, "Observed scope supports workflowInstanceId, status, cursor, limit and includeTotalCount.");
+        if (query.Any(filter => filter.Value.Count != 1)) throw new ApiException(400, "Supply each observed task filter once.");
+        var limit = 50;
+        if (query.TryGetValue("limit", out var rawLimit) && (!int.TryParse(rawLimit, out limit) || limit is < 1 or > 50))
+            throw new ApiException(400, "Observed task limit must be between 1 and 50.");
+        UserTaskStatus? status = null;
+        if (query.TryGetValue("status", out var rawStatus))
+        {
+            if (!Enum.GetNames<UserTaskStatus>().Contains(rawStatus.ToString(), StringComparer.OrdinalIgnoreCase)
+                || !Enum.TryParse<UserTaskStatus>(rawStatus, true, out var parsed))
+                throw new ApiException(400, "Unknown task status.");
+            status = parsed;
+        }
+        var includeTotalCount = false;
+        if (query.TryGetValue("includeTotalCount", out var rawTotal) && !bool.TryParse(rawTotal, out includeTotalCount))
+            throw new ApiException(400, "includeTotalCount must be true or false.");
+        var result = await observed.QueryAsync(actor, query["workflowInstanceId"], status, query["cursor"], limit, includeTotalCount, ct);
+        await http.Response.WriteAsJsonAsync(result, ct);
+    }
+
+    private static readonly HashSet<string> ObservedQueryParameters = new(StringComparer.OrdinalIgnoreCase)
+        { "scope", "workflowInstanceId", "status", "cursor", "limit", "includeTotalCount" };
+
     private static async Task<JsonObject> ReadObjectAsync(HttpContext http)
     {
         if (http.Request.ContentLength > 1024 * 1024) throw new ApiException(413, "Request is too large.");
