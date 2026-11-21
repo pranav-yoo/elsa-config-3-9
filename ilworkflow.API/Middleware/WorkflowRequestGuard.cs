@@ -20,12 +20,14 @@ public sealed class WorkflowRequestGuard
 {
     private readonly RequestDelegate _next;
     private readonly bool _preview;
+    private readonly bool _development;
 
     // Middleware receives the next pipeline step; it does not introduce new HTTP routes.
     public WorkflowRequestGuard(RequestDelegate next, IConfiguration configuration, IHostEnvironment environment)
     {
         _next = next;
-        _preview = environment.IsDevelopment() && configuration.GetValue<bool>("SwaggerPreview");
+        _development = environment.IsDevelopment();
+        _preview = _development && configuration.GetValue<bool>("SwaggerPreview");
     }
     public async Task InvokeAsync(HttpContext http, ApplicationDbContext db, IWorkflowDefinitionStore definitions, WorkflowAccessService access)
     {
@@ -51,7 +53,12 @@ public sealed class WorkflowRequestGuard
             // cased URLs could reach the native endpoint without running the corresponding guard.
             parts[0] = parts[0].ToLowerInvariant();
             if (parts.Length > 2) parts[2] = parts[2].ToLowerInvariant();
-            if (parts[0].Equals("identity", StringComparison.OrdinalIgnoreCase)) { await _next(http); return; }
+            if (parts[0].Equals("identity", StringComparison.OrdinalIgnoreCase))
+            {
+                // Local Elsa login/users/roles exist for Development only; production uses uid tokens.
+                if (!_development) throw new ApiException(404, "Not found.");
+                await _next(http); return;
+            }
             if (http.User.Identity?.IsAuthenticated != true) throw new ApiException(401, "A valid bearer token is required.");
             if (!string.IsNullOrEmpty(http.User.FindFirstValue("tenant"))) throw new ApiException(403, "This version supports the default organization only.");
             var supervisor = ConfigurationAccess.IsSupervisor(http.User);

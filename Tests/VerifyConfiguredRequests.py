@@ -1,14 +1,12 @@
 """Execute the actual main sequences in the two HTTP files, without logging or saving tokens.
 Requires accounts provisioned by Authentication.http or Tests/ConfiguredWorkflows.py.
 """
-import argparse,json,re,time,uuid,subprocess
+import argparse,json,re,time,uuid
 from pathlib import Path
 from urllib.request import Request,urlopen
 from urllib.error import HTTPError
 parser=argparse.ArgumentParser();parser.add_argument('--base-url',default='http://localhost:5000')
-mode=parser.add_mutually_exclusive_group()
-mode.add_argument('--external-masters',action='store_true')
-mode.add_argument('--observed',action='store_true')
+parser.add_argument('--observed',action='store_true')
 args=parser.parse_args()
 ROOT=Path(__file__).resolve().parents[1];responses={};variables={}
 def send(method,url,headers,body=None,expected=(200,201,202)):
@@ -21,7 +19,7 @@ def send(method,url,headers,body=None,expected=(200,201,202)):
         return error.code,None
 _,login=send('POST',args.base_url+'/elsa/api/identity/login',{'Content-Type':'application/json'},b'{"username":"admin","password":"password"}')
 ids={}
-if not (args.external_masters or args.observed):
+if not args.observed:
     _,users=send('GET',args.base_url+'/elsa/api/identity/users',{'Authorization':'Bearer '+login['accessToken']})
     ids={name+'Id':next(user['id'] for user in users['users'] if user['name']=='configured-'+name) for name in ['alice','amy','bob','clara','dan']}
 def substitute(match):
@@ -31,20 +29,12 @@ def substitute(match):
     name,path=expression.split('.response.body.$.',1);value=responses[name]
     for key,index in re.findall(r'([\w]+)|\[(\d+)\]',path):value=value[int(index)] if index else value[key]
     return json.dumps(value) if isinstance(value,(dict,list,bool)) else str(value)
-external_tokens={}
-if args.external_masters or args.observed:
-    accounts=[('Username','john','usernameJohnToken'),('Email','john@example.test','emailJohnToken')] if args.external_masters else [
-        ('Username',name,name+'Token') for name in ('clara','dan','john')]
-    for provider,identity,variable in accounts:
-        value=subprocess.check_output(['pwsh','-NoProfile','-ExecutionPolicy','Bypass','-File',str(ROOT/'New-TestAccessToken.ps1'),'-Provider',provider,'-Identity',identity],text=True).strip()
-        assert re.fullmatch(r'[\w-]+\.[\w-]+\.[\w-]+',value),'Token script did not return one JWT'
-        external_tokens[variable]=value
 count=0
-files=['Observed-Tasks.http'] if args.observed else ['External-Masters.http'] if args.external_masters else ['Workflow-Configuration.http','Ticket-Workflow.http']
+files=['Observed-Tasks.http'] if args.observed else ['Workflow-Configuration.http','Ticket-Workflow.http']
 for filename in files:
     source=(ROOT/filename).read_text().split('# END MAIN SEQUENCE')[0]
     variables.update(dict(re.findall(r'^@(\w+)\s*=\s*(.*)$',source,re.M)))
-    variables.update(ids);variables.update(external_tokens);variables['baseUrl']=args.base_url
+    variables.update(ids);variables['baseUrl']=args.base_url
     if filename in ('Workflow-Configuration.http','Observed-Tasks.http'):variables['definitionId']='example-'+uuid.uuid4().hex
     if filename=='Ticket-Workflow.http':variables['definitionId']=responses['publishConfiguration']['definitionId']
     for section in re.split(r'^###.*$',source,flags=re.M):
@@ -60,12 +50,12 @@ for filename in files:
         for attempt in range(60):
             status,result=send(method,url,headers,data,expected)
             assert status in expected,(name,status)
-            if name in ('aTasks','bTasks','cTasks','dTasks','usernameTasks','emailTasks','observedTasks','observedDanTask') and not result['items']:time.sleep(.1);continue
-            if name in ('finishedInstance','usernameFinished','emailFinished','observedFinished') and result['status']!='Finished':time.sleep(.1);continue
+            if name in ('aTasks','bTasks','cTasks','dTasks','observedTasks','observedDanTask') and not result['items']:time.sleep(.1);continue
+            if name in ('finishedInstance','observedFinished') and result['status']!='Finished':time.sleep(.1);continue
             break
         else:raise AssertionError(name+': workflow did not become ready')
         responses[name]=result;count+=1
-        if name in ('finishedInstance','usernameFinished','emailFinished','observedFinished'):assert result['workflowState']['output']['ticketOutcome']==('Rejected' if name=='emailFinished' else 'Approved')
+        if name in ('finishedInstance','observedFinished'):assert result['workflowState']['output']['ticketOutcome']=='Approved'
         if name=='observedTasks':
             assert result['totalCount']==1 and result['items'][0]['title']=='C - Clara review'
             assert result['items'][0]['allowedActions']==[]
@@ -80,7 +70,7 @@ print(f'PASS {count} actual HTTP-file requests; named response IDs/revisions and
 
 if args.observed:
     def observed_api(path, actor='admin', body=None):
-        bearer=login['accessToken'] if actor=='admin' else external_tokens[actor+'Token']
+        bearer=login['accessToken'] if actor=='admin' else responses[actor+'Login']['accessToken']
         return send('GET' if body is None else 'POST',args.base_url+path,
                     {'Authorization':'Bearer '+bearer,'Content-Type':'application/json'},
                     json.dumps(body).encode() if body is not None else None)[1]

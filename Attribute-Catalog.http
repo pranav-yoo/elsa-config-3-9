@@ -4,6 +4,9 @@
 # Published versions and their instances retain their saved snapshot.
 @baseUrl = http://localhost:5000
 @definitionId = catalog-expense-p3
+@samplePassword = Password123!
+# Elsa user id of configured-alice (from its create-user response in Authentication.http).
+@aliceId = PASTE_CONFIGURED_ALICE_USER_ID
 
 ### Login as internal configurator/admin
 # @name catalogAdmin
@@ -37,7 +40,6 @@ Authorization: Bearer {{catalogAdmin.response.body.$.accessToken}}
 
 ### Create the native Elsa family using YOUR definition_id
 # The approval condition maps claimAmount from the catalog and makes it required.
-# John is already returned by the username demo master. No registration is needed.
 # @name catalogDraft
 POST {{baseUrl}}/api/workflow-configurations
 Authorization: Bearer {{catalogAdmin.response.body.$.accessToken}}
@@ -50,8 +52,8 @@ Content-Type: application/json
     "name": "Catalog expense claim",
     "startStage": "A",
     "stages": [{
-      "key": "A", "title": "John approval",
-      "assignment": { "policy": "Specific", "members": ["external:username-demo:U001"], "userId": "external:username-demo:U001" },
+      "key": "A", "title": "Alice approval",
+      "assignment": { "policy": "Specific", "members": ["{{aliceId}}"], "userId": "{{aliceId}}" },
       "approveTo": { "kind": "REJECTED" }, "rejectTo": { "kind": "Rejected" },
       "approveRules": [{
         "when": { "attribute": "claimAmount", "operator": "GreaterThan", "value": 5000 },
@@ -70,9 +72,28 @@ Content-Type: application/json
 { "expectedRevision": {{catalogDraft.response.body.$.revision}} }
 
 ### Internal user starts the instance with the mapped conditional attributes
-# After execution, continue with John's native task requests in External-Masters.http.
+# @name catalogRun
 POST {{baseUrl}}/elsa/api/workflow-definitions/{{definitionId}}/execute
 Authorization: Bearer {{catalogAdmin.response.body.$.accessToken}}
 Content-Type: application/json
 
 { "input": { "attributes": { "claimAmount": 6000 } } }
+
+### Alice logs in
+# @name catalogAlice
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{ "username": "configured-alice", "password": "{{samplePassword}}" }
+
+### Alice finds her task
+# @name catalogTask
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&status=Assigned&workflowInstanceId={{catalogRun.response.body.$.workflowState.id}}
+Authorization: Bearer {{catalogAlice.response.body.$.accessToken}}
+
+### Alice approves (claimAmount > 5000 routes to Approved)
+POST {{baseUrl}}/elsa/api/user-tasks/{{catalogTask.response.body.$.items[0].id}}/complete
+Authorization: Bearer {{catalogAlice.response.body.$.accessToken}}
+Content-Type: application/json
+
+{ "expectedRevision": {{catalogTask.response.body.$.items[0].revision}}, "operationId": "{{$guid}}", "actionKey": "APPROVE", "data": {} }

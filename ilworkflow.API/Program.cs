@@ -7,7 +7,6 @@ using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Configuration.AddJsonFile("Samples/external-providers.json", optional: false);
 builder.Configuration.AddJsonFile("appsettings.json", optional: false);
 builder.Configuration.AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true);
 if (builder.Environment.IsDevelopment()) builder.Configuration.AddUserSecrets<Program>();
@@ -22,7 +21,7 @@ if (swaggerPreview && string.IsNullOrWhiteSpace(signingKey))
     configuration["Identity:Tokens:SigningKey"] = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(48));
 if (!swaggerPreview && (string.IsNullOrWhiteSpace(signingKey) || signingKey.Length < 32))
     throw new InvalidOperationException("Set Identity:Tokens:SigningKey to a random secret of at least 32 characters using dotnet user-secrets.");
-if (!swaggerPreview && string.IsNullOrWhiteSpace(configuration["Identity:Admin:Password"]))
+if (!swaggerPreview && builder.Environment.IsDevelopment() && string.IsNullOrWhiteSpace(configuration["Identity:Admin:Password"]))
     throw new InvalidOperationException("Set Identity:Admin:Password using dotnet user-secrets.");
 
 builder.Services.AddWorkflowServices(configuration, builder.Environment, swaggerPreview, useConfigurationIdentity);
@@ -126,9 +125,6 @@ if (!swaggerPreview)
     await using var scope = app.Services.CreateAsyncScope();
     await scope.ServiceProvider.GetRequiredService<ApplicationDbContext>().Database.MigrateAsync();
 }
-app.MapControllers();
-app.MapWorkflowsApi();
-
 app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
@@ -139,13 +135,6 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
     app.MapGet("/", () => Results.Redirect("/swagger"));
 }
+app.MapControllers();
+app.MapWorkflowsApi();
 await app.RunAsync();
-
-
-
-
-
-
-
-
-

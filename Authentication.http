@@ -333,15 +333,3 @@ Content-Type: application/json
   "password": "{{samplePassword}}"
 }
 
-
-# OPTIONAL John external-token test. No Elsa password/login is needed for John.
-# Run pwsh -NoProfile -ExecutionPolicy Bypass -File ./New-TestAccessToken.ps1 -Provider Username -Identity john
-# Restart the app if the signing key is newly created. Paste the token, not its JSON payload.
-@johnToken = PASTE_GENERATED_TOKEN
-
-### John lists assigned tasks
-# Use External-Masters.http for GET member selection and an approval assigned to John. Copy participantId from the master, not the token sub or display name. No external registration POST/database is involved.
-# @name johnTasks
-GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&status=Assigned
-Authorization: Bearer {{johnToken}}
-

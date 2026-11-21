@@ -1,11 +1,9 @@
 """Live named-definition/field-master checks. Creates research records; never prints tokens."""
-import argparse, json, subprocess, time, uuid
-from pathlib import Path
+import argparse, json, time, uuid
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
 parser=argparse.ArgumentParser();parser.add_argument('--base-url',default='http://localhost:5000');args=parser.parse_args()
-root=Path(__file__).resolve().parents[1]
 def api(method,path,body=None,token=None,expected=(200,201,202)):
     headers={'Authorization':'Bearer '+token} if token else {}
     if body is not None:headers['Content-Type']='application/json'
@@ -16,11 +14,14 @@ def api(method,path,body=None,token=None,expected=(200,201,202)):
     return json.loads(raw) if raw else None
 
 admin=api('POST','/elsa/api/identity/login',{'username':'admin','password':'password'})['accessToken']
+# configured-alice is a local Approver created by Authentication.http or Tests/ConfiguredWorkflows.py.
+alice_id=next(u['id'] for u in api('GET','/elsa/api/identity/users',token=admin)['users'] if u['name']=='configured-alice')
+alice=api('POST','/elsa/api/identity/login',{'username':'configured-alice','password':'Password123!'})['accessToken']
 definition='catalog-'+uuid.uuid4().hex
 def field(key,kind='String',status='Active',family=None):
     return api('POST','/api/workflow-attributes',{'definitionId':family or definition,'attribute':{'key':key,'type':kind},'status':status},admin)
 field('firstName');field('claimAmount','Decimal');field('department');field('obsolete','Boolean','Inactive');field('foreignField',family=definition+'-other')
-setup={'name':'Catalog claim','startStage':'A','stages':[{'key':'A','title':'John approval','assignment':{'policy':'Specific','members':['external:username-demo:U001'],'userId':'external:username-demo:U001'},'approveTo':{'kind':'Rejected'},'rejectTo':{'kind':'Rejected'},'approveRules':[{'when':{'attribute':'claimAmount','operator':'GreaterThan','value':5000},'destination':{'kind':'Approved'}}]}]}
+setup={'name':'Catalog claim','startStage':'A','stages':[{'key':'A','title':'Alice approval','assignment':{'policy':'Specific','members':[alice_id],'userId':alice_id},'approveTo':{'kind':'Rejected'},'rejectTo':{'kind':'Rejected'},'approveRules':[{'when':{'attribute':'claimAmount','operator':'GreaterThan','value':5000},'destination':{'kind':'Approved'}}]}]}
 body={'id':0,'definition_id':definition,'configuration':setup}
 condition=setup['stages'][0]['approveRules'][0]['when']
 for invalid in ('obsolete','foreignField','unknown'):
@@ -50,10 +51,9 @@ stage['assignment']={'policy':'Specific','members':assignment['members'],'userId
 empty=api('POST','/api/workflow-configurations',{'id':next_draft['id'],'expectedRevision':next_draft['revision'],'configuration':setup},admin)
 assert empty['configuration']['attributes']==[]
 assert len(api('GET',f'/api/workflow-configurations/{config["id"]}',token=admin)['configuration']['attributes'])==2
-john=subprocess.check_output(['pwsh','-NoProfile','-ExecutionPolicy','Bypass','-File',str(root/'New-TestAccessToken.ps1')],text=True).strip()
-api('POST','/api/workflow-attributes',{'definitionId':definition,'attribute':{'key':'bad','type':'String'}},john,(403,))
-task=api('GET',f'/elsa/api/user-tasks?scope=assigned&status=Assigned&workflowInstanceId={instance}',token=john)['items'][0]
-api('POST',f'/elsa/api/user-tasks/{task["id"]}/complete',{'expectedRevision':task['revision'],'operationId':str(uuid.uuid4()),'actionKey':'APPROVE','data':{}},john)
+api('POST','/api/workflow-attributes',{'definitionId':definition,'attribute':{'key':'bad','type':'String'}},alice,(403,))
+task=api('GET',f'/elsa/api/user-tasks?scope=assigned&status=Assigned&workflowInstanceId={instance}',token=alice)['items'][0]
+api('POST',f'/elsa/api/user-tasks/{task["id"]}/complete',{'expectedRevision':task['revision'],'operationId':str(uuid.uuid4()),'actionKey':'APPROVE','data':{}},alice)
 for _ in range(60):
     result=api('GET','/elsa/api/workflow-instances/'+instance,token=admin)
     if result['status']=='Finished':break

@@ -21,6 +21,7 @@ using Elsa.UserTasks.Services;
 using Elsa.UserTasks.Persistence.EFCore.Extensions;
 using Elsa.UserTasks.Persistence.EFCore.PostgreSql.Extensions;
 using IlWorkflow.Api.Tickets;
+using IlWorkflow.Infrastructure.Authentication;
 
 namespace IlWorkflow.API.Services;
 
@@ -45,7 +46,8 @@ public static class WorkflowServiceRegistration
                     // Identity persistence stores local users, password hashes, roles and grants.
                     // User Tasks persistence below stores work items; it is not the user account store.
                     if (!swaggerPreview) identity.UseEntityFrameworkCore(ef => ef.UsePostgreSql(connectionString));
-                    if (!useConfigurationIdentity) identity.UseDefaultAdmin(admin => admin
+                    // Local admin account is seeded in Development only; production callers use uid tokens.
+                    if (!useConfigurationIdentity && environment.IsDevelopment()) identity.UseDefaultAdmin(admin => admin
                         .WithAdminUserName(configuration["Identity:Admin:UserName"] ?? "admin")
                         .WithAdminRoleName("admin")
                         .WithAdminPassword(configuration["Identity:Admin:Password"]!));
@@ -57,13 +59,12 @@ public static class WorkflowServiceRegistration
                 .UseUserTasks(tasks =>
                 {
                     // Native tasks, candidate snapshots, operations and audit events survive restart.
-                    // Task assignees reference the stable user ID supplied by Elsa Identity/external authentication.
+                    // Task assignees reference the stable user ID supplied by Elsa Identity.
                     if (!swaggerPreview) tasks.UseEntityFrameworkCore(ef => ef.UsePostgreSql(connectionString));
                 })
                 .UseFlowchart(flowchart => flowchart.UseTokenBasedExecution())
                 .UseJavaScript()
                 .AddActivitiesFrom<UserTask>()
-                .AddActivitiesFrom<TicketFlow>()
                 .AddActivitiesFrom<TicketReview>()
                 .UseHttp(http => http.ConfigureHttpOptions = options => configuration.GetSection("Http").Bind(options))
                 ;
@@ -73,8 +74,7 @@ public static class WorkflowServiceRegistration
         
         // Elsa 3.9 defaults capture the root provider; both services resolve scoped runtime/mediator services.
         services.AddScoped<IUserTaskNotificationSink, DefaultUserTaskNotificationSink>();
-        services.AddScoped<IUserTaskWorkflowResumer, DefaultUserTaskWorkflowResumer>();
-        services.AddSingleton<IUserTaskFormProvider, IlWorkflow.Api.Tickets.TicketFormProvider>();
+        if (swaggerPreview) services.AddScoped<IUserTaskWorkflowResumer, DefaultUserTaskWorkflowResumer>();
         // Development accounts come from Elsa's configuration providers, rather than store seeding.
         if (useConfigurationIdentity)
             services.Configure<Elsa.Identity.Options.DefaultAdminUserOptions>(options =>
@@ -82,12 +82,8 @@ public static class WorkflowServiceRegistration
                 options.AdminUserName = configuration["Identity:Admin:UserName"] ?? "admin";
                 options.AdminPassword = configuration["Identity:Admin:Password"] ?? "";
             });
-        
-        
-        
-        
         services.AddHttpContextAccessor();
-        services.AddCompanyAuthentication(configuration, environment);
+        services.AddUserTokenAuthentication(configuration);
         services.AddScoped<IApproverDirectory, TicketIdentity>();
         if (!swaggerPreview)
         {
@@ -110,10 +106,9 @@ public static class WorkflowServiceRegistration
         services.AddSingleton<WorkflowDefinitionBuilder>();
         services.AddScoped<AssignmentResolver>();
         services.AddScoped<WorkflowAccessService>();
-        services.AddSingleton<IUserTaskFormProvider, IlWorkflow.Api.Workflows.TicketFormProvider>();
+        services.AddSingleton<IUserTaskFormProvider, TicketFormProvider>();
         services.AddAuthorization(options => options.AddPolicy("WorkflowConfigurator", policy =>
             policy.RequireAuthenticatedUser().RequireAssertion(context => ConfigurationAccess.IsConfigurator(context.User))));
-        
         return services;
     }
 }

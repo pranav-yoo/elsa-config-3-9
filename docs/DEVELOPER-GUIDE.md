@@ -4,7 +4,7 @@
 
 We own **configuration**. Elsa owns **execution**. A configuration service is not a second task engine, and the request middleware is not another ticket controller.
 
-The implementation is one ASP.NET Core application. There are no microservices, generic repository layers or domain-wide event buses. `Tickets/TicketFlow.cs` remains registered only for old persisted research definitions. New configuration generates an Elsa flowchart instead of using that full interpreter.
+The implementation is one ASP.NET Core application. There are no microservices, generic repository layers or domain-wide event buses. Configuration generates a native Elsa flowchart; there is no runtime interpreter.
 
 ## Request flow
 
@@ -49,11 +49,7 @@ Approver token
 | ilworkflow.API/Middleware/WorkflowRequestGuard.cs | InvokeAsync | Protect existing Elsa routes; it is middleware, not an endpoint/controller. |
 | ilworkflow.Infrastructure/Authorization/WorkflowAccessService.cs | CanReadInstanceAsync | Restrict native instance reads to requester, participating workers or supervisors. |
 | ilworkflow.Infrastructure/Authorization/ConfigurationAccess.cs | permission helpers | Match Elsa permission grants, including wildcard grants. |
-| ilworkflow.Infrastructure/Tickets/TicketIdentity.cs | HasRoleAsync | Resolve roles through native identity/configured external directory references without creating duplicate passwords. |
-| ilworkflow.Infrastructure/ExternalIdentity/DemoMemberDirectory.cs | Members, FindByClaim, FindByParticipantId | Shared hardcoded master data, provider settings validation and deterministic participant IDs; no member database or loopback HTTP. |
-| ilworkflow.API/Controllers/DemoMasterController.cs | Usernames, Emails | Two Development-only GET APIs, five fictional members each. |
-| ilworkflow.API/Controllers/ExternalProvidersController.cs | Get, Members | Configurator's provider/member selection; copy the returned participantId directly into a stage. |
-| ilworkflow.Infrastructure/Authentication/CompanyAuthentication.cs | AddCompanyAuthentication, OnTokenValidated | Select the trusted provider handler, validate JWT and normalize its matching member into Elsa's participant identity. |
+| ilworkflow.Infrastructure/Tickets/TicketIdentity.cs | HasRoleAsync | Resolve approver roles through native Elsa Identity. |
 | ilworkflow.Infrastructure/Persistence/UserTaskPostgreSqlCompatibility.cs | model handler and repository decorator | Correct two verified 3.9 provider edge cases without replacing Elsa task operations. |
 | Program.cs | DI, middleware order and migrations | Compose native stores and register our small integration pieces. |
 
@@ -102,7 +98,7 @@ Correction creates an assigned task for the original requester. Resubmit supplie
 
 Middleware runs after authentication/authorization and before native Elsa handlers. The configuration controller does not own native execute URLs; therefore endpoint validation alone would be bypassable if placed only there.
 
-`SwaggerPreview=true` is Development-only documentation mode. Application migrations are skipped along with Elsa's migrations, and an absent external signing key does not prevent startup. The guard returns 503 for configuration and business mutations; login remains available for browsing authorized endpoints. `Tests/ConfiguredWorkflows.py --verify-preview` checks this against a preview server, which can be started with an unavailable PostgreSQL port to verify no connection is required.
+`SwaggerPreview=true` is Development-only documentation mode. Application migrations are skipped along with Elsa's migrations. The guard returns 503 for configuration and business mutations; login remains available for browsing authorized endpoints. `Tests/ConfiguredWorkflows.py --verify-preview` checks this against a preview server, which can be started with an unavailable PostgreSQL port to verify no connection is required.
 
 The guard validates before an instance is created, injects the real requester, pins the published version, rejects alternate activity starts/custom variables, and prevents ordinary users from dispatch/import/administrative paths. Native execute is synchronous for this phase; no HTTP identity is read from a later background workflow callback.
 
@@ -116,28 +112,7 @@ Native User Tasks still enforce candidate claim rights, current owner completion
 
 Elsa Identity EF persists local users, password hashes, roles and permissions. Native user creation returns a generated ID. Username and email are not interchangeable with that ID.
 
-User Tasks EF persists tasks and references to participant IDs. It does not create login accounts. External tokens need a trusted issuer and an explicit identity mapping; local identity EF does not automatically import Azure/Keycloak employees.
-
-Use real provider-issued tokens and managed secrets in a deployment. The development token script is gated to Development; its `admin=true` claim grants nothing. Roles/permissions are mapped by the server.
-
-### GET master selection and external token flow
-
-There is deliberately no `POST /api/external-members`, external-member EF entity/migration, account upsert or first-login registration. `DemoMemberDirectory` contains five username employees and five email employees. The API and authentication use that same read-only source; calling our own server through HTTP would add a failure point without any external directory to contact.
-
-1. Configurator calls `GET /api/external-providers`, then `GET /api/external-providers/{providerId}/members`. The raw sample masters are `/api/demo-masters/usernames` and `/api/demo-masters/emails`.
-2. Each member already includes `participantId = external:{providerId}:{masterMemberId}`. Save that ID in the existing stage `members` and `userId` fields. Specific assignment requires the owner also appear in the eligible members list.
-3. The request's JWT issuer selects a provider-specific handler. That selection is not authentication: the selected handler must validate the signature, issuer, audience and lifetime. Unknown issuers fall back to the native Elsa handler and fail its trust rules.
-4. The handler reads exactly one distinct nonblank `matchClaim`, trims it, and compares it against the provider's configured `memberField` using case-insensitive matching by default. Missing, unknown and ambiguous identities fail authentication.
-5. On success the server replaces `sub`/NameIdentifier with the computed participant ID and supplies only the Approver role and its server-configured task permissions. Incoming administrator, requester, roles and permission claims are discarded. The raw token subject does not need to equal the employee/master ID. External employees cannot execute workflows; an internal requester starts the instance.
-6. Elsa checks native candidate membership, owner, allowed actions, operation ID and revision. Knowing an ID or having Approver permissions alone does not grant another employee's task. A bucket still requires claiming; a Specific task is already assigned.
-
-Both providers can be enabled simultaneously. `external:username-demo:U001` and `external:email-demo:E001` are separate Johns; equal names never link accounts. Do not change provider/master IDs after assigning work: these are stable references in persisted Elsa history. Old tasks referencing the previous static John ID are left intact and require explicit supervisor reassignment if needed.
-
-`ilworkflow.API/Samples/external-providers.json` holds profile settings; development signing keys remain in user secrets. Example mappings are `name -> username` and `email -> email`. To use another payload field, set `matchClaim` to its claim name; choose a supported authoritative `memberField` (`id`, `username`, `email` or `displayName`) that is available and uniquely identifies a member. FluentValidation checks provider settings on startup. Directory matching rejects multiple matches rather than choosing the first record.
-
-All hardcoded master members can participate as approvers, subject to each task's eligibility and ownership checks. Internal users configure workflows and submit tickets; external employees enter the process only after an instance exists. No Requester, workflow-execution, configuration or administrator permissions are granted through these demos. Outside Development the demo directory and its JWT handlers are disabled; GET demo masters return 404. Replace this fake source and development trust with real provider adapters before deploying external authentication.
-
-`New-TestAccessToken.ps1 -Provider Username -Identity john` and `-Provider Email -Identity john@example.test` issue short-lived signed test tokens. `-Subject` can vary without changing the resolved participant. `-ClaimName` supports experiments with a changed claim mapping. `External-Masters.http` documents both complete flows; no external employee registration requests are needed.
+User Tasks EF persists tasks and references to participant IDs. It does not create login accounts. Approvers, requesters and supervisors are all local Elsa Identity users.
 
 ## PostgreSQL compatibility fixes
 
@@ -152,9 +127,7 @@ The native keyword-search predicate includes `Tags.Any`, which is not translatab
 
 `Tests/ConfiguredWorkflows.py` creates realistic accounts and exercises configuration versioning, conditional approvals, all rejection routes, correction, stale/duplicate commands, concurrent claims, missing assignment repair and access/validation failures. It saves only IDs for a post-restart phase. The test runner never prints or persists issued tokens.
 
-`Tests/VerifyConfiguredRequests.py` executes the actual main HTTP-file requests, resolving their response variables and filters. `docs/build_configured_requests.py` generates those examples from the acceptance fixture; optional reject/update branches are deliberately excluded from a happy-path Send All.
-
-`Tests/ExternalMasters.py` verifies both five-member GET responses, absence of the registration POST, native task approval with both providers, case/whitespace normalization, provider isolation, discarded role escalation and rejection of invalid tokens. It confirms that external logins create no native Elsa users. After restart its second phase checks the same deterministic member IDs and persisted pending tasks before completing them with fresh tokens.
+`Tests/VerifyConfiguredRequests.py` executes the actual main HTTP-file requests, resolving their response variables and filters. Optional reject/update branches are deliberately excluded from a happy-path Send All.
 
 Pending-task restart recovery must be tested after changes to activity types, callback method names, serialization, storage drivers or provider configuration. Keep legacy registered activity types while persisted instances can reference them.
 
