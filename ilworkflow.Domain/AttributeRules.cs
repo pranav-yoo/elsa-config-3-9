@@ -20,6 +20,15 @@ public static class AttributeRules
         };
     }
     private static bool InRange(AttributeDefinition field, decimal value) => (field.Minimum is null || value >= field.Minimum) && (field.Maximum is null || value <= field.Maximum);
+    /// <summary>
+    /// Rule match: every condition without OrGroup must match, and in each OrGroup at least one must match.
+    /// A rule with no conditions never matches (validation rejects it).
+    /// </summary>
+    public static bool Matches(AttributeCondition[]? conditions, IReadOnlyDictionary<string, JsonElement> attributes) =>
+        conditions is { Length: > 0 }
+        && conditions.Where(x => x.OrGroup is null).All(x => Matches(x, attributes))
+        && conditions.Where(x => x.OrGroup is not null).GroupBy(x => x.OrGroup).All(group => group.Any(x => Matches(x, attributes)));
+
     public static bool Matches(AttributeCondition condition, IReadOnlyDictionary<string, JsonElement> attributes)
     {
         if (!attributes.TryGetValue(condition.Attribute, out var value) || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined) return false;

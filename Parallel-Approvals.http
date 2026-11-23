@@ -53,42 +53,50 @@ Content-Type: application/json
   "definition_id": "{{definitionId}}",
   "configuration": {
     "name": "Parallel claim review",
-    "startStage": "B",
+    "start_stage": "B",
     "stages": [
       {
         "key": "B", "title": "B - Initial review",
-        "assignment": { "policy": "Specific", "members": ["c73b4b68d73d6e2b"], "userId": "c73b4b68d73d6e2b" },
-        "approveTo": { "kind": "Stage", "stageKey": "C" },
-        "rejectTo": { "kind": "Rejected" }
+        "assignment": { "policy": "Specific", "members": ["c73b4b68d73d6e2b"] },
+        "actions": [
+          { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Stage", "stage_key": "C" } },
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Rejected" } }
+        ]
       },
       {
-        "key": "C", "title": "C - Clara review", "parallelWith": ["D"],
-        "assignment": { "policy": "Specific", "members": ["57cdff015b09629b"], "userId": "57cdff015b09629b" },
-        "approveTo": { "kind": "Stage", "stageKey": "E" },
-        "rejectTo": { "kind": "Rejected" }
+        "key": "C", "title": "C - Clara review", "parallel_with": ["D"],
+        "assignment": { "policy": "Specific", "members": ["57cdff015b09629b"] },
+        "actions": [
+          { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Stage", "stage_key": "E" } },
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Rejected" } }
+        ]
       },
       {
         "key": "D", "title": "D - Dan review",
-        "assignment": { "policy": "Specific", "members": ["b8d227eec7f9b8e9"], "userId": "b8d227eec7f9b8e9" },
-        "approveTo": { "kind": "Stage", "stageKey": "E" },
-        "rejectTo": { "kind": "Rejected" }
+        "assignment": { "policy": "Specific", "members": ["b8d227eec7f9b8e9"] },
+        "actions": [
+          { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Stage", "stage_key": "E" } },
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Rejected" } }
+        ]
       },
       {
         "key": "E", "title": "E - Final review",
-        "assignment": { "policy": "Specific", "members": ["{{aliceId}}"], "userId": "{{aliceId}}" },
-        "approveTo": { "kind": "Approved" },
-        "rejectTo": { "kind": "Rejected" }
+        "assignment": { "policy": "Specific", "members": ["{{aliceId}}"] },
+        "actions": [
+          { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Approved" } },
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Rejected" } }
+        ]
       }
     ]
   }
 }
 
 ### 3. Publish
-POST {{baseUrl}}/api/workflow-configurations/{{parallelDraft.response.body.$.id}}/publish
+POST {{baseUrl}}/api/workflow-configurations/{{parallelDraft.response.body.$.data.id}}/publish
 Authorization: Bearer {{parallelAdmin.response.body.$.accessToken}}
 Content-Type: application/json
 
-{ "expectedRevision": {{parallelDraft.response.body.$.revision}} }
+{ "expected_revision": {{parallelDraft.response.body.$.data.revision}} }
 
 ### 4. Start a fresh instance for each scenario
 # @name parallelRun

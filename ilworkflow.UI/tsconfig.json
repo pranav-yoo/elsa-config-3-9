@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "outDir": "./out-tsc",
+    "strict": true,
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "dom"],
+    "experimentalDecorators": true,
+    "skipLibCheck": true
+  },
+  "files": ["src/main.ts"],
+  "angularCompilerOptions": { "strictTemplates": true }
+}

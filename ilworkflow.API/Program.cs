@@ -48,7 +48,11 @@ app.UseExceptionHandler(errors => errors.Run(async context =>
 {
     context.Response.StatusCode = 500;
     context.Response.Headers["X-Trace-Id"] = context.TraceIdentifier;
-    await context.Response.WriteAsJsonAsync(new { Code = "internal_error", Message = "An unexpected error occurred. Check server logs using the trace ID.", TraceId = context.TraceIdentifier });
+    const string message = "An unexpected error occurred. Check server logs using the trace ID.";
+    if (IlWorkflow.API.Middleware.ApiResponse.Applies(context))
+        await context.Response.WriteAsJsonAsync(IlWorkflow.API.Middleware.ApiResponse.Envelope(context, new { code = "internal_error" }, [message]));
+    else
+        await context.Response.WriteAsJsonAsync(new { Code = "internal_error", Message = message, TraceId = context.TraceIdentifier });
 }));
 app.Logger.LogInformation("Storage mode: {StorageMode}", swaggerPreview ? "Swagger preview (in memory)" : "PostgreSQL");
 var databaseSettings = new NpgsqlConnectionStringBuilder(connectionString);

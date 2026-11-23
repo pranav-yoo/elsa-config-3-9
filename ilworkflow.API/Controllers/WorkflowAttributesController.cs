@@ -9,5 +9,5 @@ public sealed class WorkflowAttributesController(IWorkflowAttributeService servi
     [HttpPost]
     public async Task<IActionResult> Save(SaveWorkflowAttributeRequest request, CancellationToken ct) => Ok(await service.SaveAsync(request, ct));
     [HttpGet]
-    public async Task<IActionResult> List([FromQuery] string definitionId, CancellationToken ct) => Ok(new { items = await service.ListAsync(definitionId, ct) });
+    public async Task<IActionResult> List([FromQuery(Name = "definition_id")] string definitionId, CancellationToken ct) => Ok(new { items = await service.ListAsync(definitionId, ct) });
 }

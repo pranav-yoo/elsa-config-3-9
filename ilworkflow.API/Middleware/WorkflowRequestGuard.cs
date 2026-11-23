@@ -62,10 +62,11 @@ public sealed class WorkflowRequestGuard
             if (http.User.Identity?.IsAuthenticated != true) throw new ApiException(401, "A valid bearer token is required.");
             if (!string.IsNullOrEmpty(http.User.FindFirstValue("tenant"))) throw new ApiException(403, "This version supports the default organization only.");
             var supervisor = ConfigurationAccess.IsSupervisor(http.User);
+            // Two extra read scopes: observed (viewableByStages) and supervised (workflow supervisors).
             if (parts.Length == 1 && parts[0] == "user-tasks" && HttpMethods.IsGet(http.Request.Method)
-                && string.Equals(http.Request.Query["scope"], "observed", StringComparison.OrdinalIgnoreCase))
+                && http.Request.Query["scope"].ToString().ToLowerInvariant() is "observed" or "supervised")
             {
-                await ListObservedTasksAsync(http);
+                await ListObservedTasksAsync(http, string.Equals(http.Request.Query["scope"], "supervised", StringComparison.OrdinalIgnoreCase));
                 return;
             }
             // Elsa 3.9 keyword search includes Tags.Any(). Its PostgreSQL migration stores tags as
@@ -139,36 +140,31 @@ public sealed class WorkflowRequestGuard
         }
         catch (ValidationException exception)
         {
-            http.Response.StatusCode = 400;
-            await http.Response.WriteAsJsonAsync(new { code = "validation_failed", errors = exception.Errors.Select(x => new { field = x.PropertyName, message = x.ErrorMessage }) });
+            var errors = exception.Errors.Select(x => new { field = x.PropertyName, message = x.ErrorMessage }).ToArray();
+            await ApiResponse.WriteErrorAsync(http, 400, "validation_failed", string.Join(" ", errors.Select(x => x.message)), errors);
         }
         catch (ApiException exception)
         {
-            http.Response.StatusCode = exception.Status;
-            await http.Response.WriteAsJsonAsync(new { code = "request_rejected", message = exception.Message });
+            await ApiResponse.WriteErrorAsync(http, exception.Status, "request_rejected", exception.Message);
         }
         catch (DbUpdateException exception) when (exception.InnerException is Npgsql.PostgresException
             { SqlState: Npgsql.PostgresErrorCodes.UniqueViolation })
         {
             // Two simultaneous task commands can both pass the initial operation lookup. The native
             // store's unique index remains authoritative; expose its race as a conflict, not HTTP 500.
-            http.Response.StatusCode = 409;
-            await http.Response.WriteAsJsonAsync(new { code = "operation_conflict", message = "A competing operation was already recorded. Reload the task before deciding whether to retry." });
+            await ApiResponse.WriteErrorAsync(http, 409, "operation_conflict", "A competing operation was already recorded. Reload the task before deciding whether to retry.");
         }
         catch (DbUpdateConcurrencyException)
         {
-            http.Response.StatusCode = 409;
-            await http.Response.WriteAsJsonAsync(new { code = "revision_conflict", message = "Read the current revision and retry the intended change." });
+            await ApiResponse.WriteErrorAsync(http, 409, "revision_conflict", "Read the current revision and retry the intended change.");
         }
         catch (BadHttpRequestException exception)
         {
-            http.Response.StatusCode = exception.StatusCode;
-            await http.Response.WriteAsJsonAsync(new { code = "invalid_request", message = "Check request size and content type." });
+            await ApiResponse.WriteErrorAsync(http, exception.StatusCode, "invalid_request", "Check request size and content type.");
         }
         catch (JsonException)
         {
-            http.Response.StatusCode = 400;
-            await http.Response.WriteAsJsonAsync(new { code = "invalid_json", message = "Check JSON types, enum names and required objects." });
+            await ApiResponse.WriteErrorAsync(http, 400, "invalid_json", "Check JSON types, enum names and required objects.");
         }
         finally
         {
@@ -176,7 +172,7 @@ public sealed class WorkflowRequestGuard
             http.Request.Body = originalBody;
         }
     }
-    private static async Task ListObservedTasksAsync(HttpContext http)
+    private static async Task ListObservedTasksAsync(HttpContext http, bool supervised)
     {
         // Elsa's query scope enum is fixed. Handle only this additional read scope and leave
         // native list, detail, events and all task mutations on their existing endpoints.
@@ -190,7 +186,7 @@ public sealed class WorkflowRequestGuard
 
         var query = http.Request.Query;
         if (query.Keys.Any(key => !ObservedQueryParameters.Contains(key)))
-            throw new ApiException(400, "Observed scope supports workflowInstanceId, status, cursor, limit and includeTotalCount.");
+            throw new ApiException(400, "Observed/supervised scopes support workflowInstanceId, status, cursor, limit and includeTotalCount.");
         if (query.Any(filter => filter.Value.Count != 1)) throw new ApiException(400, "Supply each observed task filter once.");
         var limit = 50;
         if (query.TryGetValue("limit", out var rawLimit) && (!int.TryParse(rawLimit, out limit) || limit is < 1 or > 50))
@@ -206,7 +202,7 @@ public sealed class WorkflowRequestGuard
         var includeTotalCount = false;
         if (query.TryGetValue("includeTotalCount", out var rawTotal) && !bool.TryParse(rawTotal, out includeTotalCount))
             throw new ApiException(400, "includeTotalCount must be true or false.");
-        var result = await observed.QueryAsync(actor, query["workflowInstanceId"], status, query["cursor"], limit, includeTotalCount, ct);
+        var result = await observed.QueryAsync(actor, query["workflowInstanceId"], status, query["cursor"], limit, includeTotalCount, ct, supervised);
         await http.Response.WriteAsJsonAsync(result, ct);
     }
 

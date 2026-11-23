@@ -12,8 +12,9 @@ namespace IlWorkflow.Infrastructure.Persistence;
 
 public sealed class ObservedUserTasks(Store<UserTasksElsaDbContext, UserTaskRecord> store, IUserTaskRepository tasks, IUserTaskAccessPolicy access)
 {
+    /// <param name="supervised">false: tasks this actor observes (viewableByStages); true: tasks of workflows they supervise, incl. blocked.</param>
     public async Task<UserTaskQueryResultDto> QueryAsync(UserTaskActor actor, string? workflowInstanceId, UserTaskStatus? status,
-        string? cursor, int limit, bool includeTotalCount, CancellationToken ct)
+        string? cursor, int limit, bool includeTotalCount, CancellationToken ct, bool supervised = false)
     {
         if (!ObservedTaskAccess.CanObserve(actor)) throw new ApiException(403, "Task view permission is required.");
 
@@ -23,9 +24,9 @@ public sealed class ObservedUserTasks(Store<UserTasksElsaDbContext, UserTaskReco
         // Elsa stores tags in a text column in 3.9. Exact JSON containment filters membership in
         // PostgreSQL before counting or paginating, without a separate observer table.
         var sql = $"SELECT * FROM {table} WHERE \"TagsJson\"::jsonb @> CAST({{0}} AS jsonb)";
-        var tag = JsonSerializer.Serialize(new[] { ObservedTaskAccess.TagFor(actor.Subject) });
+        var tag = JsonSerializer.Serialize(new[] { supervised ? ObservedTaskAccess.SupervisorTagFor(actor.Subject) : ObservedTaskAccess.TagFor(actor.Subject) });
         var records = db.UserTasks.FromSqlRaw(sql, tag).AsNoTracking()
-            .Where(task => task.TenantId == actor.Subject.TenantId && task.HealthSeverity != UserTaskHealthSeverity.Blocking);
+            .Where(task => task.TenantId == actor.Subject.TenantId && (supervised || task.HealthSeverity != UserTaskHealthSeverity.Blocking));
         if (!string.IsNullOrEmpty(workflowInstanceId)) records = records.Where(task => task.WorkflowInstanceId == workflowInstanceId);
         if (status.HasValue) records = records.Where(task => task.Status == status.Value);
         int? total = includeTotalCount ? await records.CountAsync(ct) : null;

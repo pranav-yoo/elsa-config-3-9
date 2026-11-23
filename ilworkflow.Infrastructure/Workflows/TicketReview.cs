@@ -28,8 +28,9 @@ public static class TicketState
         context.WorkflowExecutionContext.Output["attributes"] = values;
         var routes = new Dictionary<string, bool>();
         foreach (var stage in setup.Stages)
-            for (var index = 0; index < (stage.ApproveRules?.Length ?? 0); index++)
-                routes[stage.Key + "_" + index] = AttributeRules.Matches(stage.ApproveRules![index].When, values);
+            foreach (var action in stage.Actions ?? [])
+                for (var index = 0; index < (action.Rules?.Length ?? 0); index++)
+                    routes[StageAction.RouteKey(stage.Key, action.Key, index)] = AttributeRules.Matches(action.Rules![index].Conditions, values);
         var snapshot = JsonSerializer.SerializeToNode(values)!;
         snapshot["$routes"] = JsonSerializer.SerializeToNode(routes);
         // Keep the original fields for existing persisted graphs. New graphs read only $routes;
@@ -60,7 +61,7 @@ public sealed class InitializeTicket : Activity
 }
 
 [Activity("Tickets", "Tickets", "Schedules one native approval or correction task.")]
-[FlowNode("Approve", "Reject", "Resubmit")]
+[FlowNode("Approve", "Reject", "Resubmit", "Custom")]
 public sealed class TicketReview : Activity
 {
     [Input] public Input<string> ConfigurationJson { get; set; } = null!;
@@ -69,6 +70,16 @@ public sealed class TicketReview : Activity
     [Input] public Input<bool> ParallelBranch { get; set; } = new(false);
     [JsonIgnore, Port("Review")] public UserTask Review { get; set; }
     private static ActivityExecutionContext Parent(ExpressionExecutionContext context) => context.GetActivityExecutionContext().ParentActivityExecutionContext!;
+    // The pinned snapshot + stage key stored on this visit; never the latest editable configuration.
+    // Visits recorded before stage actions existed have no "stageKey" property: return null.
+    private static StageDefinition? StageOf(ActivityExecutionContext context) =>
+        context.GetProperty<string>("stageKey") is { } key && context.GetProperty<string>("schema") is { } schema
+            ? IlWorkflow.Application.Configuration.ConfigurationJson.Read<WorkflowSetup>(schema).Stages.FirstOrDefault(x => x.Key == key)
+            : null;
+    private static readonly UserTaskActionDefinition[] BuiltInActions =
+        [new(TaskActionKeys.Approve, "Approve"), new(TaskActionKeys.Reject, "Reject")];
+    private static UserTaskActionDefinition[] ActionsOf(ActivityExecutionContext context) =>
+        StageOf(context)?.Actions?.Select(x => new UserTaskActionDefinition(x.Key, x.DisplayLabel)).ToArray() ?? BuiltInActions;
     private static ResolvedAssignment Assignment(ExpressionExecutionContext context) => IlWorkflow.Application.Configuration.ConfigurationJson.Read<ResolvedAssignment>(Parent(context).GetProperty<string>("assignment")!);
     public TicketReview()
     {
@@ -87,10 +98,14 @@ public sealed class TicketReview : Activity
             MembershipResolutionMode = new(UserTaskMembershipResolutionMode.Snapshot),
             TaskData = new(ctx => JsonSerializer.SerializeToElement(TicketState.Attributes(Parent(ctx).WorkflowExecutionContext))),
             // Typed actions avoid nested Input<string> deserialization inside a literal JSON array in Elsa 3.9.
+            // Review tasks show the stage's configured actions (APPROVE, REJECT, then custom ones).
             ActionDefinitions = new(ctx => Parent(ctx).GetProperty<bool>("correction")
                 ? [new UserTaskActionDefinition(TaskActionKeys.Resubmit, "Resubmit")]
-                : [new UserTaskActionDefinition(TaskActionKeys.Approve, "Approve"), new UserTaskActionDefinition(TaskActionKeys.Reject, "Reject")]),
-            Form = new(ctx => new UserTaskFormReference("configured-ticket", Parent(ctx).GetProperty<bool>("correction") ? "correction" : "review", Parent(ctx).GetProperty<string>("schema")))
+                : ActionsOf(Parent(ctx))),
+            // The form key carries the stage so completion validation knows which actions this task offers.
+            Form = new(ctx => new UserTaskFormReference("configured-ticket",
+                Parent(ctx).GetProperty<bool>("correction") ? "correction" : "review:" + Parent(ctx).GetProperty<string>("stageKey"),
+                Parent(ctx).GetProperty<string>("schema")))
         };
     }
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
@@ -109,21 +124,26 @@ public sealed class TicketReview : Activity
         // workflow output instead; completed activity contexts may be removed by the runtime.
         context.SetProperty("assignment", IlWorkflow.Application.Configuration.ConfigurationJson.Write(assignment));
         context.SetProperty("schema", schema);
+        context.SetProperty("stageKey", stage.Key);
         context.SetProperty("correction", correction);
         context.SetProperty("parallelBranch", parallelBranch);
         context.SetProperty("title", correction ? "Correct and resubmit: " + stage.Title : stage.Title);
+        var tags = new List<string>();
+        var users = context.GetRequiredService<IApproverDirectory>();
         if (!correction && stage.ViewableByStages is { Length: > 0 } viewerStages)
         {
             // These members may observe before their own stage exists. Snapshot their eligibility
             // at task creation without changing the native candidate or assignee lists.
-            var users = context.GetRequiredService<IApproverDirectory>();
-            var viewers = new List<string>();
             foreach (var member in setup.Stages.Where(other => viewerStages.Contains(other.Key))
                 .SelectMany(other => other.Assignment.Members).Distinct(StringComparer.Ordinal))
                 if (await users.HasRoleAsync(member, "Approver", context.CancellationToken))
-                    viewers.Add(ObservedTaskAccess.TagFor(TicketState.User(member)));
-            context.SetProperty("observerTags", IlWorkflow.Application.Configuration.ConfigurationJson.Write(viewers));
+                    tags.Add(ObservedTaskAccess.TagFor(TicketState.User(member)));
         }
+        // Workflow supervisors see (and may reassign) every task of this workflow, including corrections.
+        foreach (var supervisor in setup.Supervisors ?? [])
+            if (await users.HasRoleAsync(supervisor, WorkflowSetup.SupervisorRole, context.CancellationToken))
+                tags.Add(ObservedTaskAccess.SupervisorTagFor(TicketState.User(supervisor)));
+        if (tags.Count > 0) context.SetProperty("observerTags", IlWorkflow.Application.Configuration.ConfigurationJson.Write(tags));
         if (!parallelBranch)
         {
             context.WorkflowExecutionContext.Output["currentStage"] = stage.Key;
@@ -135,7 +155,18 @@ public sealed class TicketReview : Activity
     {
         var context = completed.TargetContext;
         var stimulus = context.GetWorkflowInput<UserTaskStimulus>(UserTask.InputKey);
-        var decision = TaskActionKeys.Parse(stimulus.ActionKey) ?? throw new InvalidOperationException("Unknown task decision.");
+        var decision = TaskActionKeys.Parse(stimulus.ActionKey);
+        if (decision is null)
+        {
+            // A configured custom action (e.g. REFER_UW). The form provider already checked it belongs to this stage.
+            // Older pending tasks have no stageKey property and only offer the built-in actions.
+            var custom = StageOf(context)?.CustomActions.FirstOrDefault(x => string.Equals(x.Key, stimulus.ActionKey, StringComparison.OrdinalIgnoreCase));
+            if (custom is null) throw new InvalidOperationException("Unknown task decision.");
+            context.ExpressionExecutionContext.SetVariable("lastAction", custom.Key);
+            context.WorkflowExecutionContext.Output["lastDecision"] = custom.Key;
+            await context.CompleteActivityWithOutcomesAsync(nameof(TaskDecision.Custom));
+            return;
+        }
         // The task form provider already validated the payload. Revalidate at the execution boundary,
         // preserve the preceding snapshot, then expose a Resubmit outcome to the graph's configured edge.
         if (decision == TaskDecision.Resubmit)
@@ -154,10 +185,11 @@ public sealed class TicketReview : Activity
             output["attributeHistory"] = JsonSerializer.SerializeToElement(history);
             TicketState.SetAttributes(context, attributes, schema);
         }
+        var outcome = decision.Value.ToString();
         if (!context.GetProperty<bool>("parallelBranch"))
-            context.WorkflowExecutionContext.Output["lastDecision"] = decision.ToString();
+            context.WorkflowExecutionContext.Output["lastDecision"] = outcome;
         // Persisted graphs use enum names for ports, independently of the public task action keys.
-        await context.CompleteActivityWithOutcomesAsync(decision.ToString());
+        await context.CompleteActivityWithOutcomesAsync(outcome);
     }
 }
 

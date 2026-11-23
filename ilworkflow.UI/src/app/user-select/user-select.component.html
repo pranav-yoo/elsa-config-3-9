@@ -1,0 +1,7 @@
+<label>User</label>
+<select [ngModel]="selectedId()" (ngModelChange)="userChange.emit($event)">
+  <option value="">— select Elsa user —</option>
+  @for (u of users(); track u.id) {
+    <option [value]="u.id">{{ u.name }}{{ u.roles?.length ? ' (' + u.roles!.join(', ') + ')' : '' }}</option>
+  }
+</select>

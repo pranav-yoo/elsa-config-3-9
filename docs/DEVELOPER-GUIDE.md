@@ -28,7 +28,7 @@ Approver token
   -> native task permissions, owner and revision checks
   -> configured-ticket form provider -> FluentValidation
   -> Elsa accepts completion and resumes its bookmark
-  -> TicketReview.OnCompletedAsync emits Approve / Reject / Resubmit
+  -> TicketReview.OnCompletedAsync emits Approve / Reject / Resubmit, or Custom for configured actions (routed by lastAction)
   -> native flowchart connections / FlowDecision choose the next node
   -> FinishTicket writes Approved / Rejected to native workflow output
 ```
@@ -98,7 +98,7 @@ Correction creates an assigned task for the original requester. Resubmit supplie
 
 Middleware runs after authentication/authorization and before native Elsa handlers. The configuration controller does not own native execute URLs; therefore endpoint validation alone would be bypassable if placed only there.
 
-`SwaggerPreview=true` is Development-only documentation mode. Application migrations are skipped along with Elsa's migrations. The guard returns 503 for configuration and business mutations; login remains available for browsing authorized endpoints. `Tests/ConfiguredWorkflows.py --verify-preview` checks this against a preview server, which can be started with an unavailable PostgreSQL port to verify no connection is required.
+`SwaggerPreview=true` is Development-only documentation mode. Application migrations are skipped along with Elsa's migrations. The guard returns 503 for configuration and business mutations; login remains available for browsing authorized endpoints. `ConfiguredWorkflowTests` with `ILWORKFLOW_VERIFY_PREVIEW=1` checks this against a preview server, which can be started with an unavailable PostgreSQL port to verify no connection is required.
 
 The guard validates before an instance is created, injects the real requester, pins the published version, rejects alternate activity starts/custom variables, and prevents ordinary users from dispatch/import/administrative paths. Native execute is synchronous for this phase; no HTTP identity is read from a later background workflow callback.
 
@@ -125,9 +125,9 @@ The native keyword-search predicate includes `Tags.Any`, which is not translatab
 
 ## Verification and remaining boundaries
 
-`Tests/ConfiguredWorkflows.py` creates realistic accounts and exercises configuration versioning, conditional approvals, all rejection routes, correction, stale/duplicate commands, concurrent claims, missing assignment repair and access/validation failures. It saves only IDs for a post-restart phase. The test runner never prints or persists issued tokens.
+`ilworkflow.Tests/ConfiguredWorkflowTests.cs` creates realistic accounts and exercises configuration versioning, conditional approvals, all rejection routes, correction, stale/duplicate commands, concurrent claims, missing assignment repair and access/validation failures. It saves only IDs for a post-restart phase. The test runner never prints or persists issued tokens.
 
-`Tests/VerifyConfiguredRequests.py` executes the actual main HTTP-file requests, resolving their response variables and filters. Optional reject/update branches are deliberately excluded from a happy-path Send All.
+`ilworkflow.Tests/HttpFileSequenceTests.cs` executes the actual main HTTP-file requests, resolving their response variables and filters. Optional reject/update branches are deliberately excluded from a happy-path Send All.
 
 Pending-task restart recovery must be tested after changes to activity types, callback method names, serialization, storage drivers or provider configuration. Keep legacy registered activity types while persisted instances can reference them.
 
@@ -137,8 +137,8 @@ Native completion is asynchronous: 202 is acceptance, not proof the next task ex
 
 ## Named definitions and active field master
 
-Use Attribute-Catalog.http to create master fields through POST /api/workflow-attributes before creating the workflow. Pass definition_id in the configuration POST to set the native Elsa family ID. Use the catalog key in when.attribute. The adapter resolves the keys used by approval and assignment conditions against active catalog fields for the same definition, then FluentValidation checks every condition against that mapping.
+Use Attribute-Catalog.http to create master fields through POST /api/workflow-attributes before creating the workflow. Pass definition_id in the configuration POST to set the native Elsa family ID. Use the catalog key in a rule's conditions[].attribute (same orGroup = OR, otherwise AND). The adapter resolves the keys used by approval and assignment conditions against active catalog fields for the same definition, then FluentValidation checks every condition against that mapping.
 
 The snapshot preserves catalog types and constraints and marks each mapped field required. Draft saves and next-draft creation refresh the mapping using the existing definition ID. Published snapshots and running instances retain their saved fields. Attribute keys are unique within a definition. Configuration and attribute controllers require the configurator permission and are unavailable in preview mode.
 
-AttributeDefinitionValidator is shared by master writes and configuration validation. WorkflowAttributeService implements the application port with EF Core; the API controller contains no persistence logic. Tests/AttributeCatalog.py exercises both field storage and native workflow execution/approval.
+AttributeDefinitionValidator is shared by master writes and configuration validation. WorkflowAttributeService implements the application port with EF Core; the API controller contains no persistence logic. ilworkflow.Tests/AttributeCatalogTests.cs exercises both field storage and native workflow execution/approval.

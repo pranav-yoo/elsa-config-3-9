@@ -27,16 +27,38 @@ public sealed class WorkflowDefinitionBuilder
         activities.Add(new { id = "approved", type = "Tickets.FinishTicket", version = 1, outcome = Literal(nameof(TicketOutcome.Approved)) });
         activities.Add(new { id = "rejected", type = "Tickets.FinishTicket", version = 1, outcome = Literal(nameof(TicketOutcome.Rejected)) });
         // Correction nodes are explicit graph nodes with a fixed return edge. They are not a second
-        // interpreter or a client-supplied destination. Each rejecting stage gets its own correction node.
+        // interpreter or a client-supplied destination. One node per (origin stage, return stage), so
+        // several actions of a stage can send the ticket to the same correction.
+        var corrections = new Dictionary<(string Origin, string Return), string>();
         string Target(Destination destination, string origin)
         {
             if (destination.Kind == DestinationKind.Approved) return "approved";
             if (destination.Kind == DestinationKind.Rejected) return "rejected";
             if (destination.Kind == DestinationKind.Stage) return "stage_" + destination.StageKey;
-            var correctionId = "correction_" + origin;
+            if (corrections.TryGetValue((origin, destination.StageKey!), out var existing)) return existing;
+            var correctionId = corrections.Keys.Any(x => x.Origin == origin) ? $"correction_{origin}_{destination.StageKey}" : "correction_" + origin;
+            corrections[(origin, destination.StageKey!)] = correctionId;
             activities.Add(Review(correctionId, origin, correction: true));
             Link(correctionId, nameof(TaskDecision.Resubmit), "stage_" + destination.StageKey);
             return correctionId;
+        }
+        // An action's rules become a chain of FlowDecision nodes reading the persisted typed comparison
+        // results. JavaScript must not round decimal/Int64 values or treat an omitted field as an
+        // inherited object property. Returns the node the action's outcome should connect to.
+        string ActionEntry(StageDefinition stage, StageAction action)
+        {
+            var rules = action.Rules ?? [];
+            string RuleId(int i) => action.Key == TaskActionKeys.Approve ? $"rule_{stage.Key}_{i}" : $"rule_{stage.Key}_{action.Key}_{i}";
+            for (var i = 0; i < rules.Length; i++)
+            {
+                var routeKey = JsonSerializer.Serialize(StageAction.RouteKey(stage.Key, action.Key, i));
+                activities.Add(new { id = RuleId(i), type = "Elsa.FlowDecision", version = 1,
+                    condition = new { typeName = "Boolean", expression = new { type = "JavaScript",
+                        value = $"JSON.parse(getVariable('attributesJson'))['$routes'][{routeKey}] === true" } } });
+                Link(RuleId(i), "True", Target(rules[i].Destination, stage.Key));
+                Link(RuleId(i), "False", i + 1 < rules.Length ? RuleId(i + 1) : Target(action.Destination, stage.Key));
+            }
+            return rules.Length == 0 ? Target(action.Destination, stage.Key) : RuleId(0);
         }
         Link("initialize", "Done", "stage_" + setup.StartStage);
         var parallelMembers = setup.Stages.SelectMany(stage => stage.ParallelWith ?? []).ToHashSet(StringComparer.Ordinal);
@@ -48,24 +70,29 @@ public sealed class WorkflowDefinitionBuilder
                     branches = members.Prepend(stage.Key).Select(key => Review($"parallel-branch-{stage.Key}-{key}", key, parallel: true)).ToArray() });
             else
                 activities.Add(Review(id, stage.Key));
-            Link(id, nameof(TaskDecision.Reject), Target(stage.RejectTo, stage.Key));
-            var rules = stage.ApproveRules ?? [];
-            Link(id, nameof(TaskDecision.Approve), rules.Length == 0 ? Target(stage.ApproveTo, stage.Key) : "rule_" + stage.Key + "_0");
-            for (var i = 0; i < rules.Length; i++)
+            Link(id, nameof(TaskDecision.Reject), ActionEntry(stage, stage.Reject!));
+            Link(id, nameof(TaskDecision.Approve), ActionEntry(stage, stage.Approve!));
+            // Custom actions share one "Custom" port; the activity records the chosen key in lastAction
+            // and a FlowDecision chain sends it to that action's rules/destination.
+            var custom = stage.CustomActions;
+            for (var i = 0; i < custom.Length; i++)
             {
-                var ruleId = "rule_" + stage.Key + "_" + i;
-                // Read the persisted result of the shared typed comparison. JavaScript must not
-                // round decimal/Int64 values or treat an omitted field as an inherited object property.
-                var ruleKey = JsonSerializer.Serialize(stage.Key + "_" + i);
-                activities.Add(new { id = ruleId, type = "Elsa.FlowDecision", version = 1,
+                var nodeId = $"action_{stage.Key}_{i}";
+                if (i == 0) Link(id, nameof(TaskDecision.Custom), nodeId);
+                activities.Add(new { id = nodeId, type = "Elsa.FlowDecision", version = 1,
                     condition = new { typeName = "Boolean", expression = new { type = "JavaScript",
-                        value = $"JSON.parse(getVariable('attributesJson'))['$routes'][{ruleKey}] === true" } } });
-                Link(ruleId, "True", Target(rules[i].Destination, stage.Key));
-                Link(ruleId, "False", i + 1 < rules.Length ? "rule_" + stage.Key + "_" + (i + 1) : Target(stage.ApproveTo, stage.Key));
+                        value = $"getVariable('lastAction') === {JsonSerializer.Serialize(custom[i].Key)}" } } });
+                Link(nodeId, "True", ActionEntry(stage, custom[i]));
+                // Unreachable for validated input (the form provider only accepts configured keys); fail closed.
+                Link(nodeId, "False", i + 1 < custom.Length ? $"action_{stage.Key}_{i + 1}" : "rejected");
             }
         }
+        const string storageDriver = "Elsa.Workflows.WorkflowInstanceStorageDriver, Elsa.Workflows.Core";
         return ConfigurationJson.Write(new { id = "ticket_graph", type = "Elsa.Flowchart", version = 1, start = "initialize",
-            activities, connections, variables = new[] { new { id = "attributesJson", name = "attributesJson", typeName = "String",
-                storageDriverTypeName = "Elsa.Workflows.WorkflowInstanceStorageDriver, Elsa.Workflows.Core" } } });
+            activities, connections, variables = new[]
+            {
+                new { id = "attributesJson", name = "attributesJson", typeName = "String", storageDriverTypeName = storageDriver },
+                new { id = "lastAction", name = "lastAction", typeName = "String", storageDriverTypeName = storageDriver }
+            } });
     }
 }

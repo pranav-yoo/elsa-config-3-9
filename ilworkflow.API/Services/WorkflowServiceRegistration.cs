@@ -98,14 +98,25 @@ public static class WorkflowServiceRegistration
         services.AddDbContext<ApplicationDbContext>(options => options.UseNpgsql(connectionString,
             provider => provider.MigrationsHistoryTable("__EFMigrationsHistory", "Application")));
         // FluentValidation handles required fields; catalog-backed requests may omit inline attributes.
-        services.AddControllers(options => options.SuppressImplicitRequiredAttributeForNonNullableReferenceTypes = true).AddJsonOptions(options =>
-            options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter(allowIntegerValues: false)));
+        services.AddControllers(options =>
+        {
+            options.SuppressImplicitRequiredAttributeForNonNullableReferenceTypes = true;
+            // Company envelope { trace_id, messages, data } for this application's /api/* endpoints.
+            options.Filters.Add<IlWorkflow.API.Middleware.ApiResponseFilter>();
+        }).AddJsonOptions(options =>
+        {
+            options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter(allowIntegerValues: false));
+            // /api/* request and response properties are snake_case (start_stage, stage_key, or_group...).
+            // Dictionary keys (ticket attribute names) and stored snapshots keep their own names.
+            options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower;
+        });
         services.AddScoped<WorkflowConfigurationValidator>();
         services.AddScoped<IWorkflowConfigurationService, WorkflowConfigurationService>();
         services.AddScoped<IWorkflowAttributeService, WorkflowAttributeService>();
         services.AddSingleton<WorkflowDefinitionBuilder>();
         services.AddScoped<AssignmentResolver>();
         services.AddScoped<WorkflowAccessService>();
+        services.AddScoped<IlWorkflow.Infrastructure.Tasks.TaskService>();
         services.AddSingleton<IUserTaskFormProvider, TicketFormProvider>();
         services.AddAuthorization(options => options.AddPolicy("WorkflowConfigurator", policy =>
             policy.RequireAuthenticatedUser().RequireAssertion(context => ConfigurationAccess.IsConfigurator(context.User))));

@@ -134,19 +134,10 @@ Content-Type: application/json
 
 ### B: find current task
 # Wait/retry until items is nonempty. Every stage/visit has a NEW task ID.
+# B's bucket has a single member (Bob), so the task is assigned to him directly; no claim needed.
 # @name bTasks
-GET {{baseUrl}}/elsa/api/user-tasks?scope=available&status=Available&workflowInstanceId={{startTicket.response.body.$.workflowState.id}}&includeTotalCount=true
+GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&status=Assigned&workflowInstanceId={{startTicket.response.body.$.workflowState.id}}&includeTotalCount=true
 Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
-
-
-### B: claim ownership
-# Native Elsa enforces one owner and revision conflicts.
-# @name bClaim
-POST {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}/claim
-Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
-Content-Type: application/json
-
-{"expectedRevision": {{bTasks.response.body.$.items[0].revision}}, "operationId": "{{$guid}}"}
 
 
 ### B: read latest revision

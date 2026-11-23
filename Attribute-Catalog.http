@@ -22,7 +22,7 @@ Authorization: Bearer {{catalogAdmin.response.body.$.accessToken}}
 Content-Type: application/json
 
 {
-  "definitionId": "{{definitionId}}",
+  "definition_id": "{{definitionId}}",
   "status": "Active",
   "attribute": { "key": "claimAmount", "type": "Decimal", "required": true, "minimum": 0 }
 }
@@ -32,10 +32,10 @@ POST {{baseUrl}}/api/workflow-attributes
 Authorization: Bearer {{catalogAdmin.response.body.$.accessToken}}
 Content-Type: application/json
 
-{ "definitionId": "{{definitionId}}", "status": "Inactive", "attribute": { "key": "oldNotes", "type": "String" } }
+{ "definition_id": "{{definitionId}}", "status": "Inactive", "attribute": { "key": "oldNotes", "type": "String" } }
 
 ### Inspect the master (shows both statuses)
-GET {{baseUrl}}/api/workflow-attributes?definitionId={{definitionId}}
+GET {{baseUrl}}/api/workflow-attributes?definition_id={{definitionId}}
 Authorization: Bearer {{catalogAdmin.response.body.$.accessToken}}
 
 ### Create the native Elsa family using YOUR definition_id
@@ -50,26 +50,29 @@ Content-Type: application/json
   "definition_id": "{{definitionId}}",
   "configuration": {
     "name": "Catalog expense claim",
-    "startStage": "A",
+    "start_stage": "A",
     "stages": [{
       "key": "A", "title": "Alice approval",
-      "assignment": { "policy": "Specific", "members": ["{{aliceId}}"], "userId": "{{aliceId}}" },
-      "approveTo": { "kind": "REJECTED" }, "rejectTo": { "kind": "Rejected" },
-      "approveRules": [{
-        "when": { "attribute": "claimAmount", "operator": "GreaterThan", "value": 5000 },
-        "destination": { "kind": "Approved" }
-      }]
+      "assignment": { "policy": "Specific", "members": ["{{aliceId}}"] },
+      "actions": [
+        { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Rejected" },
+          "rules": [{
+            "conditions": [ { "attribute": "claimAmount", "operator": "GreaterThan", "value": 5000 } ],
+            "destination": { "kind": "Approved" }
+          }] },
+        { "key": "REJECT", "label": "Reject", "destination": { "kind": "Rejected" } }
+      ]
     }]
   }
 }
 
 ### Publish the saved attribute snapshot
 # @name catalogPublished
-POST {{baseUrl}}/api/workflow-configurations/{{catalogDraft.response.body.$.id}}/publish
+POST {{baseUrl}}/api/workflow-configurations/{{catalogDraft.response.body.$.data.id}}/publish
 Authorization: Bearer {{catalogAdmin.response.body.$.accessToken}}
 Content-Type: application/json
 
-{ "expectedRevision": {{catalogDraft.response.body.$.revision}} }
+{ "expected_revision": {{catalogDraft.response.body.$.data.revision}} }
 
 ### Internal user starts the instance with the mapped conditional attributes
 # @name catalogRun

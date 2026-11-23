@@ -1,0 +1,16 @@
+@use '../../styles/variables' as *;
+
+:host { display: flex; align-items: center; gap: 12px; }
+
+label { font-weight: 600; color: $icici-maroon; }
+
+select {
+  padding: 8px 12px;
+  min-width: 240px;
+  border: 1px solid $icici-orange;
+  border-radius: 6px;
+  background: #fff;
+  color: $text;
+
+  &:focus { outline: 2px solid $icici-maroon; }
+}

@@ -38,7 +38,7 @@ POST {{baseUrl}}/api/workflow-attributes
 Authorization: Bearer {{observerAdmin.response.body.$.accessToken}}
 Content-Type: application/json
 
-{ "definitionId": "{{definitionId}}", "attribute": { "key": "claimAmount", "type": "Decimal" } }
+{ "definition_id": "{{definitionId}}", "attribute": { "key": "claimAmount", "type": "Decimal" } }
 
 ### 3. Configure C to be visible to D's members
 # @name observerDraft
@@ -50,23 +50,27 @@ Content-Type: application/json
   "definition_id": "{{definitionId}}",
   "configuration": {
     "name": "Claim review with read-only visibility",
-    "startStage": "C",
+    "start_stage": "C",
     "stages": [
       {
-        "key": "C", "title": "C - Clara review", "viewableByStages": ["D"],
-        "assignment": { "policy": "Specific", "members": ["57cdff015b09629b"], "userId": "57cdff015b09629b" },
-        "approveTo": { "kind": "Stage", "stageKey": "D" },
-        "approveRules": [{
-          "when": { "attribute": "claimAmount", "operator": "GreaterThan", "value": 5000 },
-          "destination": { "kind": "Stage", "stageKey": "D" }
-        }],
-        "rejectTo": { "kind": "Rejected" }
+        "key": "C", "title": "C - Clara review", "viewable_by_stages": ["D"],
+        "assignment": { "policy": "Specific", "members": ["57cdff015b09629b"] },
+        "actions": [
+          { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Stage", "stage_key": "D" },
+            "rules": [{
+              "conditions": [ { "attribute": "claimAmount", "operator": "GreaterThan", "value": 5000 } ],
+              "destination": { "kind": "Stage", "stage_key": "D" }
+            }] },
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Rejected" } }
+        ]
       },
       {
         "key": "D", "title": "D - Dan review",
-        "assignment": { "policy": "Specific", "members": ["b8d227eec7f9b8e9"], "userId": "b8d227eec7f9b8e9" },
-        "approveTo": { "kind": "Approved" },
-        "rejectTo": { "kind": "Rejected" }
+        "assignment": { "policy": "Specific", "members": ["b8d227eec7f9b8e9"] },
+        "actions": [
+          { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Approved" } },
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Rejected" } }
+        ]
       }
     ]
   }
@@ -74,11 +78,11 @@ Content-Type: application/json
 
 ### 4. Publish
 # @name observerPublished
-POST {{baseUrl}}/api/workflow-configurations/{{observerDraft.response.body.$.id}}/publish
+POST {{baseUrl}}/api/workflow-configurations/{{observerDraft.response.body.$.data.id}}/publish
 Authorization: Bearer {{observerAdmin.response.body.$.accessToken}}
 Content-Type: application/json
 
-{ "expectedRevision": {{observerDraft.response.body.$.revision}} }
+{ "expected_revision": {{observerDraft.response.body.$.data.revision}} }
 
 ### 5. Start the workflow as admin
 # @name observerRun

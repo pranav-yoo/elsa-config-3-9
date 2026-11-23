@@ -1,0 +1,29 @@
+<table>
+  <thead>
+    <tr>
+      <th>Name</th><th>Status</th><th>Data</th><th>Assignee</th><th>Workflow instance</th><th>Created</th>
+      <th class="actions-col">Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    @for (t of tasks(); track t.id) {
+      <tr [class.clickable]="isAssigned(t)" (click)="isAssigned(t) && open.emit(t)">
+        <td>{{ t.title ?? t.displayName ?? t.name ?? t.id }}</td>
+        <td>{{ t.status }}</td>
+        <td class="data">{{ t.data | json }}</td>
+        <td>{{ who(t.assignee ?? t.assignedTo) }}</td>
+        <td>{{ t.workflowInstanceId }}</td>
+        <td>{{ (t.createdAt ?? t.createdAtUtc) | date:'short' }}</td>
+        <td class="actions-col">
+          @if (isAvailable(t)) {
+            <button class="act claim" [disabled]="busy()" (click)="claim.emit(t); $event.stopPropagation()">Claim</button>
+          }
+          @if (isAssigned(t)) {
+            <button class="act" [disabled]="busy()" (click)="open.emit(t); $event.stopPropagation()">Open</button>
+          }
+        </td>
+      </tr>
+    }
+  </tbody>
+</table>
+<details><summary>Raw response</summary><pre>{{ tasks() | json }}</pre></details>

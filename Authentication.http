@@ -87,6 +87,41 @@ Content-Type: application/json
 }
 
 
+### Create role workflow_supervisor IF MISSING
+# For users listed in a workflow's "supervisors": they see and reassign tasks of THOSE workflows only
+# (GET /elsa/api/user-tasks?scope=supervised). No supervise permission, so no global access.
+# @name createRoleWorkflowSupervisor
+POST {{baseUrl}}/elsa/api/identity/roles
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "id": "workflow_supervisor",
+  "name": "workflow_supervisor",
+  "permissions": [
+    "user-tasks:view",
+    "user-tasks:assign",
+    "workflows/instances:view"
+  ]
+}
+
+
+### Create supervisor-sam (workflow supervisor) IF MISSING
+# Elsa generates id. Put the returned user id in a workflow's "supervisors" list.
+# @name createUserSam
+POST {{baseUrl}}/elsa/api/identity/users
+Authorization: Bearer {{adminLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "supervisor-sam",
+  "password": "{{samplePassword}}",
+  "roles": [
+    "workflow_supervisor"
+  ]
+}
+
+
 ### Create role Supervisor IF MISSING
 # Native Elsa API; run once. Do not recreate an existing role.
 # @name createRoleSupervisor

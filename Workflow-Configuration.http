@@ -34,7 +34,7 @@ Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
 {
-  "definitionId": "{{definitionId}}",
+  "definition_id": "{{definitionId}}",
   "attribute": {
     "key": "claimAmount",
     "type": "Decimal",
@@ -56,7 +56,7 @@ Content-Type: application/json
   "definition_id": "{{definitionId}}",
   "configuration": {
     "name": "Configured Expense Claim",
-    "startStage": "A",
+    "start_stage": "A",
     "stages": [
       {
         "key": "A",
@@ -68,14 +68,10 @@ Content-Type: application/json
             "{{amyId}}"
           ]
         },
-        "approveTo": {
-          "kind": "Stage",
-          "stageKey": "B"
-        },
-        "rejectTo": {
-          "kind": "Correction",
-          "stageKey": "A"
-        }
+        "actions": [
+          { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Stage", "stage_key": "B" } },
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Correction", "stage_key": "A" } }
+        ]
       },
       {
         "key": "B",
@@ -86,26 +82,22 @@ Content-Type: application/json
             "{{bobId}}"
           ]
         },
-        "approveTo": {
-          "kind": "Stage",
-          "stageKey": "D"
-        },
-        "rejectTo": {
-          "kind": "Stage",
-          "stageKey": "A"
-        },
-        "approveRules": [
+        "actions": [
           {
-            "when": {
-              "attribute": "claimAmount",
-              "operator": "GreaterThan",
-              "value": 5000
-            },
-            "destination": {
-              "kind": "Stage",
-              "stageKey": "C"
-            }
-          }
+            "key": "APPROVE",
+            "label": "Approve",
+            "destination": { "kind": "Stage", "stage_key": "D" },
+            "rules": [
+              {
+                "conditions": [
+                  { "attribute": "claimAmount", "operator": "GreaterThan", "value": 5000 }
+                ],
+                "destination": { "kind": "Stage", "stage_key": "C" }
+              }
+            ]
+          },
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Stage", "stage_key": "A" } },
+          { "key": "REFER_UW", "label": "Refer to UW", "destination": { "kind": "Stage", "stage_key": "C" }, "require_reason": true }
         ]
       },
       {
@@ -118,22 +110,17 @@ Content-Type: application/json
           ],
           "rules": [
             {
-              "when": {
-                "attribute": "claimAmount",
-                "operator": "GreaterThan",
-                "value": 5000
-              },
-              "userId": "{{claraId}}"
+              "conditions": [
+                { "attribute": "claimAmount", "operator": "GreaterThan", "value": 5000 }
+              ],
+              "user_id": "{{claraId}}"
             }
           ]
         },
-        "approveTo": {
-          "kind": "Stage",
-          "stageKey": "D"
-        },
-        "rejectTo": {
-          "kind": "Rejected"
-        }
+        "actions": [
+          { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Stage", "stage_key": "D" } },
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Rejected" } }
+        ]
       },
       {
         "key": "D",
@@ -142,16 +129,12 @@ Content-Type: application/json
           "policy": "Specific",
           "members": [
             "{{danId}}"
-          ],
-          "userId": "{{danId}}"
+          ]
         },
-        "approveTo": {
-          "kind": "Approved"
-        },
-        "rejectTo": {
-          "kind": "Correction",
-          "stageKey": "D"
-        }
+        "actions": [
+          { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Approved" } },
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Correction", "stage_key": "D" } }
+        ]
       }
     ]
   }
@@ -160,7 +143,7 @@ Content-Type: application/json
 
 ### Read draft
 # @name readConfiguration
-GET {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.id}}
+GET {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.data.id}}
 Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
 
 
@@ -172,12 +155,12 @@ Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
 {
-  "id": {{readConfiguration.response.body.$.id}},
-  "expectedRevision": {{readConfiguration.response.body.$.revision}},
+  "id": {{readConfiguration.response.body.$.data.id}},
+  "expected_revision": {{readConfiguration.response.body.$.data.revision}},
   "configuration": {
-    "name": "{{readConfiguration.response.body.$.configuration.name}}",
-    "startStage": "{{readConfiguration.response.body.$.configuration.startStage}}",
-    "stages": {{readConfiguration.response.body.$.configuration.stages}}
+    "name": "{{readConfiguration.response.body.$.data.configuration.name}}",
+    "start_stage": "{{readConfiguration.response.body.$.data.configuration.start_stage}}",
+    "stages": {{readConfiguration.response.body.$.data.configuration.stages}}
   }
 }
 
@@ -185,7 +168,7 @@ Content-Type: application/json
 ### Validate without publishing
 # 200 valid=true; FluentValidation failures return 400 with field/message errors.
 # @name validateConfiguration
-POST {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.id}}/validate
+POST {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.data.id}}/validate
 Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
@@ -195,20 +178,20 @@ Content-Type: application/json
 ### Publish exact Elsa version
 # Copy returned definitionId into Ticket-Workflow.http. This version is now immutable.
 # @name publishConfiguration
-POST {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.id}}/publish
+POST {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.data.id}}/publish
 Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
-{"expectedRevision": {{updateConfiguration.response.body.$.revision}}}
+{"expected_revision": {{updateConfiguration.response.body.$.data.revision}}}
 
 # END MAIN SEQUENCE
 
 ### OPTIONAL next editable draft
 # Returns a NEW configuration id and Elsa version; edit that id with POST. Existing instances remain pinned to their original version.
 # @name nextDraft
-POST {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.id}}/next-draft
+POST {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.data.id}}/next-draft
 Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
-{"expectedRevision": {{publishConfiguration.response.body.$.revision}}}
+{"expected_revision": {{publishConfiguration.response.body.$.data.revision}}}
 

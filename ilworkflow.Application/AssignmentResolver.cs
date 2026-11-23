@@ -16,9 +16,10 @@ public sealed class AssignmentResolver(IApproverDirectory users)
             if (await users.HasRoleAsync(member, "Approver", ct)) eligible.Add(member);
         var selected = assignment.Policy switch
         {
-            AssignmentPolicy.Specific => assignment.UserId,
-            AssignmentPolicy.Condition => (assignment.Rules ?? []).FirstOrDefault(x => AttributeRules.Matches(x.When, attributes))?.UserId,
-            _ => null
+            AssignmentPolicy.Specific => assignment.SpecificOwner,
+            AssignmentPolicy.Condition => (assignment.Rules ?? []).FirstOrDefault(x => AttributeRules.Matches(x.Conditions, attributes))?.UserId,
+            // A bucket with a single eligible member needs no claim: assign it directly.
+            _ => eligible.Count == 1 ? eligible[0] : null
         };
         var blocked = eligible.Count == 0 || assignment.Policy != AssignmentPolicy.Bucket && (selected is null || !eligible.Contains(selected));
         // An unresolved assignment never turns into implicit approval. Supervisors may assign the blocked task.

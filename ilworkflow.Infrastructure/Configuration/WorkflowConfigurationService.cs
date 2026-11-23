@@ -56,7 +56,7 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
             row.Revision++;
         }
         var input = request.Configuration;
-        var setup = await MapConditionalAttributesAsync(row.DefinitionId, new WorkflowSetup(input.Name, [], input.StartStage, input.Stages), ct);
+        var setup = await MapConditionalAttributesAsync(row.DefinitionId, new WorkflowSetup(input.Name, [], input.StartStage, input.Stages, input.Supervisors), ct);
         await validator.ValidateAndThrowAsync(setup, ct);
         row.UsesAttributeCatalog = true;
         row.ConfigurationJson = ConfigurationJson.Write(setup);
@@ -76,10 +76,13 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
         var keys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var stage in setup.Stages ?? [])
         {
-            foreach (var rule in stage?.ApproveRules ?? [])
-                if (rule?.When?.Attribute is { } key) keys.Add(key);
+            foreach (var action in stage?.Actions ?? [])
+                foreach (var rule in action?.Rules ?? [])
+                    foreach (var condition in rule?.Conditions ?? [])
+                        if (condition?.Attribute is { } key) keys.Add(key);
             foreach (var rule in stage?.Assignment?.Rules ?? [])
-                if (rule?.When?.Attribute is { } key) keys.Add(key);
+                foreach (var condition in rule?.Conditions ?? [])
+                    if (condition?.Attribute is { } key) keys.Add(key);
         }
 
         if (keys.Count == 0) return setup with { Attributes = [] };

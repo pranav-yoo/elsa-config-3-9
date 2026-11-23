@@ -40,23 +40,79 @@ Run requests one at a time; use named responses within a file and copy marked ID
 
 `POST /api/workflow-attributes` creates a master field (missing/zero `id`) or updates one (positive `id`). Each row belongs to a `definitionId` and has `status: Active` or `Inactive`. `GET /api/workflow-attributes?definitionId=expense-claim-v1` lists that family's master records.
 
-Pass `definition_id` in `POST /api/workflow-configurations` to create Elsa's workflow with that exact ID. Supply the attribute key in `when.attribute` for an approval route or conditional assignment. The server maps those keys to active rows from `Application.WorkflowAttributes` under the same definition ID. Missing, inactive or other-definition references return 400. Each mapped field is mandatory. An existing definition ID returns 409. Definition IDs cannot change on updates.
+Pass `definition_id` in `POST /api/workflow-configurations` to create Elsa's workflow with that exact ID. Supply the attribute key in a rule's `conditions[].attribute` for an approval route or conditional assignment. The server maps those keys to active rows from `Application.WorkflowAttributes` under the same definition ID. Missing, inactive or other-definition references return 400. Each mapped field is mandatory. An existing definition ID returns 409. Definition IDs cannot change on updates.
 
 The configuration request contains the name, start stage and stages. The response includes the resolved attribute snapshot. Draft saves and next-draft creation resolve the current conditional fields. Publishing freezes that snapshot for running instances. Workflows without conditions have an empty attribute snapshot. Send the mapped values in `input.attributes` at execution and in `data.attributes` when resubmitting corrections. Your application can store its section and subsection data separately.
 
-The attribute table and catalog-source flag are installed by migration `202611020001_WorkflowAttributes` on persistent startup. Run `python Tests/AttributeCatalog.py --base-url http://localhost:5000` to verify the named-definition flow and native approval.
+The attribute table and catalog-source flag are installed by migration `202611020001_WorkflowAttributes` on persistent startup. Run `dotnet test ilworkflow.Tests --filter AttributeCatalogTests` to verify the named-definition flow and native approval.
 
 POST /api/workflow-configurations creates for absent/null/zero id; positive IDs update drafts with expectedRevision. Published snapshots are immutable. Stale revisions return 409; unknown positive IDs return 404. Execution, tasks, instances and history use native Elsa APIs. No custom PUT or /api/tickets endpoint exists.
 
 Above 5000, approval passes through C; 5000 and below bypass C. Rejection: A returns to correction/A; B returns to A; C ends Rejected; D returns to correction/D. Resubmission uses the same instance and preserves attribute revisions. Read workflowState.output.ticketOutcome for Approved/Rejected; technical Finished is not a business outcome. Poll after 202 completion. Reuse the original operationId/body/revision when retrying one command.
 
-New review tasks expose `APPROVE` and `REJECT`. Correction tasks expose `RESUBMIT`. Use the exact `actions[].key` returned by task detail when sending `actionKey`, including for older pending tasks.
+Review tasks expose the stage's `actions` (`APPROVE`, `REJECT` and any custom keys). Correction tasks expose `RESUBMIT`. Use the exact `actions[].key` returned by task detail when sending `actionKey`, including for older pending tasks.
+
+### Assignment policies
+
+- `Bucket`: every `members` entry sees the task and one of them claims it. With a single eligible member the task is assigned to that member directly (no claim).
+- `Specific`: assigned directly to `userId`. With a single member, omit `userId`; that member is the owner. With several members, `userId` is required and must be one of them.
+- `Condition`: the first matching rule's `userId` (one of `members`) is the owner; no match blocks the task for supervisor assignment.
+
+### Response format (/api/*)
+
+All application endpoints (`/api/tasks`, `/api/workflow-configurations`, `/api/workflow-attributes`) return
+`{ "trace_id": "...", "messages": ["..."], "data": { ... } }`, for success and errors (errors put `code` and, for validation, `errors[]` in `data`).
+Elsa's native `/elsa/api/*` endpoints keep Elsa's format.
+All `/api/*` property and query names are snake_case (`definition_id`, `start_stage`, `stage_key`, `or_group`, `require_reason`, `expected_revision`, `workflow_instance_id`, …). Ticket attribute names (e.g. `claimAmount`) and enum values (`Stage`, `Bucket`, `APPROVE`) are unchanged.
+
+### Workflow supervisors
+
+Add `"supervisors": ["<userId>", ...]` to the workflow (next to `name`, `start_stage`). Listed users see every task of that workflow (all stages, correction and blocked tasks) and can reassign them; they cannot claim or complete. They need the `workflow_supervisor` role (`user-tasks:view`, `user-tasks:assign`, `workflows/instances:view`, deliberately no `user-tasks:supervise`), so they see only the workflows that list them; see Authentication.http. The global `Supervisor` role still sees everything.
+
+- List: `GET /elsa/api/user-tasks?scope=supervised` (filters: workflowInstanceId, status, cursor, limit, includeTotalCount).
+- Detail/history: `GET /elsa/api/user-tasks/{id}`, `/events`, and `GET /elsa/api/workflow-instances/{instanceId}`.
+- Reassign: `POST /elsa/api/user-tasks/{id}/assign` (native Elsa body).
+
+The list is part of the published snapshot: tasks are tagged when created, so changing supervisors needs a new version and applies to new tasks.
+
+### Stage actions (task buttons)
+
+Each stage lists its task buttons in `actions`. `APPROVE` and `REJECT` are required; any other key is a custom action (UPPER_CASE, e.g. `REFER_UW`) with a `label`. Each action has a `destination` (`Stage`, `Correction`, `Approved`, `Rejected`; APPROVE cannot go to `Correction`) and optional `rules` that pick a conditional destination. REJECT always requires `data.reason`; set `"require_reason": true` to require it for a custom action. Custom actions are not allowed on parallel stages.
+
+```json
+"actions": [
+  { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Stage", "stage_key": "D" },
+    "rules": [ { "conditions": [ { "attribute": "claimAmount", "operator": "GreaterThan", "value": 5000 } ],
+                 "destination": { "kind": "Stage", "stage_key": "C" } } ] },
+  { "key": "REJECT", "label": "Reject", "destination": { "kind": "Stage", "stage_key": "A" } },
+  { "key": "REFER_UW", "label": "Refer to UW", "destination": { "kind": "Stage", "stage_key": "UW" }, "require_reason": true }
+]
+```
+
+The task's `actions` (key + label) in `GET /elsa/api/user-tasks` and task detail are exactly these buttons; complete with `actionKey` set to one of them. Instance output `lastDecision` holds the chosen key. Older configurations with `approveTo` / `rejectTo` / `approveRules` are still read (converted to APPROVE/REJECT actions).
+
+### Rule conditions (AND / OR)
+
+`actions[].rules[]` and `assignment.rules[]` hold a `conditions` list. Conditions without `or_group` must all match; within each `or_group` number at least one must match. Rules are checked in order and the first match wins. Maximum 20 conditions per rule.
+
+```json
+{
+  "conditions": [
+    { "attribute": "claimAmount", "operator": "GreaterThan", "value": 5000 },
+    { "attribute": "department", "operator": "Equals", "value": "Finance", "or_group": 1 },
+    { "attribute": "department", "operator": "Equals", "value": "HR", "or_group": 1 }
+  ],
+  "destination": { "kind": "Stage", "stage_key": "C" }
+}
+```
+
+This means claimAmount > 5000 AND (department = Finance OR HR). Older configurations stored a single `when` object; it is still read (as a one-item list) so published versions keep routing, but new requests should use `conditions`.
 
 ## Parallel approvals
 
 Add `"parallelWith": ["D"]` to stage C. Routes into C open both C and D as separate Elsa tasks. The first approval follows C's approval route and cancels unanswered tasks. If every branch rejects, the group follows C's rejection route. Define C and D as regular stages with their own assignments and matching default destinations. Put shared approval rules on C and route to C to enter the group.
 
-Run the [parallel approval requests](Parallel-Approvals.http) for each decision order. Use `python Tests/ParallelWorkflows.py` for the live PostgreSQL checks, then restart the API and repeat with `--verify-restart`.
+Run the [parallel approval requests](Parallel-Approvals.http) for each decision order. Use `dotnet test ilworkflow.Tests --filter ParallelWorkflowTests` for the live PostgreSQL checks, then restart the API and repeat with `ILWORKFLOW_VERIFY_RESTART=1`.
 
 ## Read-only stage access
 
@@ -77,13 +133,13 @@ Migration IDs, schemas and persisted activity identities are preserved. Existing
 Use a research database; tests create records but do not save tokens.
 
 ```powershell
-python Tests/ConfiguredWorkflows.py --base-url http://localhost:5000
-python Tests/VerifyConfiguredRequests.py --base-url http://localhost:5000
-python Tests/VerifyConfiguredRequests.py --base-url http://localhost:5000 --observed
+# Live tests (ilworkflow.Tests) skip when the API is unreachable.
+$env:ILWORKFLOW_BASE_URL = "http://localhost:5000"
+dotnet test ilworkflow.Tests
 # Restart API, then:
-python Tests/ConfiguredWorkflows.py --base-url http://localhost:5000 --verify-restart
+$env:ILWORKFLOW_VERIFY_RESTART = "1"; dotnet test ilworkflow.Tests; Remove-Item Env:ILWORKFLOW_VERIFY_RESTART
 # In documentation preview instead:
-python Tests/ConfiguredWorkflows.py --base-url http://localhost:5000 --verify-preview
+$env:ILWORKFLOW_VERIFY_PREVIEW = "1"; dotnet test ilworkflow.Tests --filter ConfiguredWorkflowTests; Remove-Item Env:ILWORKFLOW_VERIFY_PREVIEW
 ```
 
 Checks cover conditional routing, correction, exact comparisons, cycles, concurrency, permissions, version pinning and restart recovery.

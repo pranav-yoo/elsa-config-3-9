@@ -25,7 +25,10 @@ public sealed class TicketFormProvider : IUserTaskFormProvider
         // Binding carries the published snapshot pinned when this task was created. Reading the
         // latest configuration here would silently change the rules for an already pending task.
         var setup = ConfigurationJson.Read<WorkflowSetup>(form.Requested.Binding!);
-        var result = await new TaskDecisionValidator(setup, form.Requested.Key == "correction").ValidateAsync(new DecisionData(actionKey, data), cancellationToken);
+        // Review keys are "review:<stageKey>" (older tasks: "review", built-in actions only).
+        var key = form.Requested.Key;
+        var stageKey = key.StartsWith("review:", StringComparison.Ordinal) ? key["review:".Length..] : null;
+        var result = await new TaskDecisionValidator(setup, key == "correction", stageKey).ValidateAsync(new DecisionData(actionKey, data), cancellationToken);
         return result.IsValid ? new(true, data.Clone()) : new(false, Errors: result.Errors.Select(x => x.ErrorMessage).ToArray());
     }
 }

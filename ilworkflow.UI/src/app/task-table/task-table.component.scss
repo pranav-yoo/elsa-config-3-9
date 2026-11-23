@@ -1,0 +1,57 @@
+@use '../../styles/variables' as *;
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .08);
+}
+
+th, td {
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid $border;
+  font-size: 14px;
+}
+
+th { background: $icici-maroon; color: #fff; font-weight: 600; }
+tbody tr:hover { background: #fff6ee; }
+
+.actions-col { text-align: right; white-space: nowrap; width: 1%; }
+
+.act {
+  margin-left: 6px;
+  padding: 5px 14px;
+  border: 1px solid $icici-maroon;
+  border-radius: 4px;
+  background: $icici-maroon;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+
+  &:hover:not(:disabled) { background: $icici-maroon-dark; }
+  &:disabled { opacity: .5; cursor: default; }
+  &.claim { background: $icici-orange; border-color: $icici-orange; }
+  &.reject { background: #fff; color: $icici-maroon; }
+}
+
+details {
+  margin-top: 12px;
+  summary { color: $icici-maroon; cursor: pointer; }
+  pre {
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 300px;
+    overflow: auto;
+    background: #fff;
+    padding: 8px;
+    border: 1px solid $border;
+    border-radius: 6px;
+  }
+}
+
+.data { font-family: monospace; font-size: 12px; max-width: 260px; white-space: pre-wrap; word-break: break-all; }
+tbody tr.clickable { cursor: pointer; }
