@@ -38,7 +38,7 @@ Approver token
 | File | Entry points | Why this code exists |
 |---|---|---|
 | ilworkflow.API/Controllers/WorkflowConfigurationController.cs | Save, Get, Validate, Publish, NextDraft | Conventional controller; HTTP binding, authorization and responses only. POST implements create/update. |
-| ilworkflow.Infrastructure/Configuration/WorkflowConfigurationService.cs | SaveAsync, PublishAsync, CreateNextDraftAsync, ApplySetup | Coordinate our schema snapshot with native Elsa version lifecycle; never manage task claims. |
+| ilworkflow.Infrastructure/Configuration/WorkflowConfigurationService.cs | SaveAsync (create, update or next version), PublishAsync, ApplySetup | Coordinate our schema snapshot with native Elsa version lifecycle; never manage task claims. |
 | ilworkflow.Domain/WorkflowConfiguration.cs | records/enums/JSON settings | Define the supported configuration vocabulary; reject unknown enum values rather than accept arbitrary strings or script source. |
 | ilworkflow.Application/WorkflowConfigurationValidators.cs | WorkflowConfigurationValidator, TicketInputValidator, AttributeRules | Centralize field validation, eligibility, typed conditions and graph checks using FluentValidation. |
 | ilworkflow.Infrastructure/Persistence/ApplicationDbContext.cs | model mapping and explicit migration | Store version-linked JSONB configuration and the preconfigured attribute master, using a separate schema and migration history. |
@@ -62,19 +62,20 @@ Approver token
 - `workflowState.id`: the submitted ticket/workflow instance ID.
 - Task `id`: one stage visit's human task. Returning to A creates another task, not a reset of the old task.
 - `operationId`: one native task command UUID. Reuse the original command body for a retry.
-- `expectedRevision`: configuration revision for application POST updates, or native task revision for task commands. These counters are independent.
+- `expectedRevision`: the native task revision for task commands. Configuration `revision` is a separate, internal counter returned in responses; clients never send it.
+- `workflow_definition_id` / `workflow_version_id`: the configuration family and one of its versions (Elsa's version ID). Updates need both; omitting the version ID creates a new version.
 
 ## Configuration and publishing
 
 `SaveAsync` runs asynchronous FluentValidation, creates or loads a native draft, generates its graph and persists the application snapshot. A unique version index and EF concurrency token supplement validation.
 
-`PublishAsync` takes a PostgreSQL advisory transaction lock per workflow family. This serializes saves/publishes/next-draft requests across application processes. It does not serialize unrelated workflows.
+`PublishAsync` takes a PostgreSQL advisory transaction lock per workflow family. This serializes saves, new versions and publishes across application processes. It does not serialize unrelated workflows.
 
 Elsa uses separate EF contexts, so this is **not** a single transaction spanning every native write. We therefore commit `Ready=true` only after native publication succeeds. Native execute refuses a version without a ready, frozen matching configuration and generated-definition hash. A partial failure can leave native work to retry/reconcile; it cannot admit incomplete configuration through the guarded execute route. An initial-save failure may leave an orphan native draft that an administrator can inspect/delete.
 
 Elsa normalizes serialized drafts. Hash the representation read back from its native store, not the pre-save JSON text. The hash is an integrity check against accidental raw edits, not an authorization secret. Trusted administrators/SDK callers must still follow the configuration boundary.
 
-`Frozen` remains true after a newer version retracts this version. Old instances may still reference it. `CreateNextDraftAsync` uses Elsa's draft creation and rebuilds from the selected configuration, including when that source is a historical version.
+`Frozen` remains true after a newer version retracts this version. Old instances may still reference it. Saving a definition ID without a version ID uses Elsa's draft creation from the published version and builds the new draft from the configuration in the request, so a new version never depends on an older snapshot.
 
 ## Why a generated graph plus a typed review activity?
 
@@ -137,8 +138,8 @@ Native completion is asynchronous: 202 is acceptance, not proof the next task ex
 
 ## Named definitions and active field master
 
-Use Attribute-Catalog.http to create master fields through POST /api/workflow-attributes before creating the workflow. Pass definition_id in the configuration POST to set the native Elsa family ID. Use the catalog key in a rule's conditions[].attribute (same orGroup = OR, otherwise AND). The adapter resolves the keys used by approval and assignment conditions against active catalog fields for the same definition, then FluentValidation checks every condition against that mapping.
+Use Attribute-Catalog.http to create master fields through POST /api/workflow-attributes before creating the workflow. Pass workflow_definition_id in the configuration POST to set the native Elsa family ID. Use the catalog key in a rule's conditions[].attribute (same orGroup = OR, otherwise AND). The adapter resolves the keys used by approval and assignment conditions against active catalog fields for the same definition, then FluentValidation checks every condition against that mapping.
 
-The snapshot preserves catalog types and constraints and marks each mapped field required. Draft saves and next-draft creation refresh the mapping using the existing definition ID. Published snapshots and running instances retain their saved fields. Attribute keys are unique within a definition. Configuration and attribute controllers require the configurator permission and are unavailable in preview mode.
+The snapshot preserves catalog types and constraints and marks each mapped field required. Draft saves and new-version creation refresh the mapping using the existing definition ID. Published snapshots and running instances retain their saved fields. Attribute keys are unique within a definition. Configuration and attribute controllers require the configurator permission and are unavailable in preview mode.
 
 AttributeDefinitionValidator is shared by master writes and configuration validation. WorkflowAttributeService implements the application port with EF Core; the API controller contains no persistence logic. ilworkflow.Tests/AttributeCatalogTests.cs exercises both field storage and native workflow execution/approval.

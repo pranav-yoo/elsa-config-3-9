@@ -47,7 +47,7 @@ Authorization: Bearer {{observerAdmin.response.body.$.accessToken}}
 Content-Type: application/json
 
 {
-  "definition_id": "{{definitionId}}",
+  "workflow_definition_id": "{{definitionId}}",
   "configuration": {
     "name": "Claim review with read-only visibility",
     "start_stage": "C",
@@ -78,11 +78,8 @@ Content-Type: application/json
 
 ### 4. Publish
 # @name observerPublished
-POST {{baseUrl}}/api/workflow-configurations/{{observerDraft.response.body.$.data.id}}/publish
+POST {{baseUrl}}/api/workflow-configurations/{{observerDraft.response.body.$.data.workflow_definition_id}}/versions/{{observerDraft.response.body.$.data.workflow_version_id}}/publish
 Authorization: Bearer {{observerAdmin.response.body.$.accessToken}}
-Content-Type: application/json
-
-{ "expected_revision": {{observerDraft.response.body.$.data.revision}} }
 
 ### 5. Start the workflow as admin
 # @name observerRun

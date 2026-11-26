@@ -2,10 +2,27 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 namespace IlWorkflow.Application.Configuration;
 
-public sealed record SaveConfigurationRequest(long? Id, long? ExpectedRevision, WorkflowSetupRequest Configuration,
-    [property: JsonPropertyName("definition_id")] string? DefinitionId = null);
+/// <summary>
+/// One save contract for every configuration write. Unmapped members are rejected so a retired field such as
+/// <c>definition_id</c> or <c>id</c> returns 400 instead of silently creating an unrelated definition.
+/// <list type="bullet">
+/// <item>No <c>workflow_definition_id</c>: create a new definition with a generated ID and its first version.</item>
+/// <item><c>workflow_definition_id</c> only: create that definition, or its next version when it already exists.</item>
+/// <item>Both IDs: update that draft version.</item>
+/// </list>
+/// </summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record SaveConfigurationRequest(
+    [property: JsonPropertyName("workflow_definition_id")] string? WorkflowDefinitionId,
+    [property: JsonPropertyName("workflow_version_id")] string? WorkflowVersionId,
+    WorkflowSetupRequest Configuration);
 public sealed record WorkflowSetupRequest(string Name, string StartStage, StageDefinition[] Stages, string[]? Supervisors = null);
-public sealed record RevisionRequest(long ExpectedRevision);
+
+/// <summary>Public shape of one configuration version. Revision is an internal counter that grows on every save and publish.</summary>
+public sealed record WorkflowConfigurationResponse(
+    [property: JsonPropertyName("workflow_definition_id")] string WorkflowDefinitionId,
+    [property: JsonPropertyName("workflow_version_id")] string WorkflowVersionId,
+    int VersionNumber, long Revision, bool IsPublished, WorkflowSetup Configuration);
 
 public static class ConfigurationJson
 {
@@ -31,11 +48,10 @@ public interface IApproverDirectory
 }
 public interface IWorkflowConfigurationService
 {
-    Task<WorkflowConfiguration> GetAsync(long id, CancellationToken ct);
+    Task<WorkflowConfiguration> GetAsync(string workflowDefinitionId, string workflowVersionId, CancellationToken ct);
     Task<WorkflowConfiguration> SaveAsync(SaveConfigurationRequest request, CancellationToken ct);
-    Task ValidateAsync(long id, CancellationToken ct);
-    Task<WorkflowConfiguration> PublishAsync(long id, long expectedRevision, CancellationToken ct);
-    Task<WorkflowConfiguration> CreateNextDraftAsync(long id, long expectedRevision, CancellationToken ct);
+    Task ValidateAsync(string workflowDefinitionId, string workflowVersionId, CancellationToken ct);
+    Task<WorkflowConfiguration> PublishAsync(string workflowDefinitionId, string workflowVersionId, CancellationToken ct);
 }
 
 // /api/tasks wrapper requests. ExpectedRevision/OperationId are optional: omitted values use the task's

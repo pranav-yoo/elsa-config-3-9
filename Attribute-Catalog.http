@@ -1,6 +1,7 @@
 # Configure fields BEFORE the workflow. Run one request at a time.
-# Reusing definition_id with id=0 returns 409. To edit, POST the existing configuration id
-# and expectedRevision. Draft saves resolve current conditional fields for the same definition_id.
+# Sending an existing workflow_definition_id WITHOUT workflow_version_id creates its next version (409 while a draft is open).
+# To edit a draft, POST both workflow_definition_id and workflow_version_id. Draft saves resolve current conditional fields
+# for the same workflow_definition_id.
 # Published versions and their instances retain their saved snapshot.
 @baseUrl = http://localhost:5000
 @definitionId = catalog-expense-p3
@@ -38,7 +39,7 @@ Content-Type: application/json
 GET {{baseUrl}}/api/workflow-attributes?definition_id={{definitionId}}
 Authorization: Bearer {{catalogAdmin.response.body.$.accessToken}}
 
-### Create the native Elsa family using YOUR definition_id
+### Create the native Elsa family using YOUR workflow_definition_id
 # The approval condition maps claimAmount from the catalog and makes it required.
 # @name catalogDraft
 POST {{baseUrl}}/api/workflow-configurations
@@ -46,8 +47,7 @@ Authorization: Bearer {{catalogAdmin.response.body.$.accessToken}}
 Content-Type: application/json
 
 {
-  "id": 0,
-  "definition_id": "{{definitionId}}",
+  "workflow_definition_id": "{{definitionId}}",
   "configuration": {
     "name": "Catalog expense claim",
     "start_stage": "A",
@@ -68,11 +68,8 @@ Content-Type: application/json
 
 ### Publish the saved attribute snapshot
 # @name catalogPublished
-POST {{baseUrl}}/api/workflow-configurations/{{catalogDraft.response.body.$.data.id}}/publish
+POST {{baseUrl}}/api/workflow-configurations/{{catalogDraft.response.body.$.data.workflow_definition_id}}/versions/{{catalogDraft.response.body.$.data.workflow_version_id}}/publish
 Authorization: Bearer {{catalogAdmin.response.body.$.accessToken}}
-Content-Type: application/json
-
-{ "expected_revision": {{catalogDraft.response.body.$.data.revision}} }
 
 ### Internal user starts the instance with the mapped conditional attributes
 # @name catalogRun

@@ -50,13 +50,15 @@ public sealed class HttpFileSequenceTests(ITestOutputHelper output) : IDisposabl
         Assert.NotEqual((string)first["items"]![0]!["id"]!, (string)second["items"]![0]!["id"]!);
 
         var published = responses["observerPublished"]!["data"]!; // /api responses use the { trace_id, messages, data } envelope
-        var draft = await api.PostAsync($"/api/workflow-configurations/{published["id"]}/next-draft", new JsonObject { ["expectedRevision"] = published["revision"]!.DeepClone() });
-        var setup = draft["configuration"]!.AsObject();
+        var current = await api.GetAsync($"/api/workflow-configurations/{published["workflow_definition_id"]}/versions/{published["workflow_version_id"]}");
+        var setup = current["configuration"]!.AsObject();
         setup.Remove("attributes");
         setup["stages"]![0]!.AsObject().Remove("viewableByStages");
-        draft = await api.PostAsync("/api/workflow-configurations",
-            new JsonObject { ["id"] = draft["id"]!.DeepClone(), ["expectedRevision"] = draft["revision"]!.DeepClone(), ["configuration"] = setup.DeepClone() });
-        await api.PostAsync($"/api/workflow-configurations/{draft["id"]}/publish", new JsonObject { ["expectedRevision"] = draft["revision"]!.DeepClone() });
+        // No version ID: the published definition gets its next version.
+        var draft = await api.PostAsync("/api/workflow-configurations",
+            new JsonObject { ["workflowDefinitionId"] = current["workflowDefinitionId"]!.DeepClone(), ["configuration"] = setup.DeepClone() });
+        Assert.NotEqual(current["workflowVersionId"]!.ToString(), draft["workflowVersionId"]!.ToString());
+        await api.PostAsync($"/api/workflow-configurations/{draft["workflowDefinitionId"]}/versions/{draft["workflowVersionId"]}/publish", null);
         var created = (string)(await api.PostAsync(execute, payload))["workflowState"]!["id"]!;
         Assert.Single((await api.GetAsync(observedPath + "&workflowInstanceId=" + existing, Actor("dan")))["items"]!.AsArray());
         Assert.Empty((await api.GetAsync(observedPath + "&workflowInstanceId=" + created, Actor("dan")))["items"]!.AsArray());
@@ -111,7 +113,7 @@ public sealed class HttpFileSequenceTests(ITestOutputHelper output) : IDisposabl
             foreach (var (key, value) in file.Variables) variables[key] = value;
             variables["baseUrl"] = api.BaseUrl;
             if (filename is "Workflow-Configuration.http" or "Observed-Tasks.http") variables["definitionId"] = "example-" + Hex();
-            if (filename == "Ticket-Workflow.http") variables["definitionId"] = (string)responses["publishConfiguration"]!["data"]!["definition_id"]!;
+            if (filename == "Ticket-Workflow.http") variables["definitionId"] = (string)responses["publishConfiguration"]!["data"]!["workflow_definition_id"]!;
 
             foreach (var request in file.Requests)
             {

@@ -16,53 +16,35 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
     IWorkflowDefinitionStore definitions, WorkflowDefinitionBuilder builder, WorkflowConfigurationValidator validator) : IWorkflowConfigurationService
 {
     public static string Hash(string source) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source)));
-    public async Task<WorkflowConfiguration> GetAsync(long id, CancellationToken ct) =>
-        await db.WorkflowConfigurations.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == "", ct) ?? throw new ApiException(404, "Configuration not found.");
+    public async Task<WorkflowConfiguration> GetAsync(string workflowDefinitionId, string workflowVersionId, CancellationToken ct) =>
+        await db.WorkflowConfigurations.SingleOrDefaultAsync(x => x.TenantId == "" && x.DefinitionId == workflowDefinitionId
+            && x.DefinitionVersionId == workflowVersionId, ct) ?? throw new ApiException(404, "Configuration version not found.");
 
-    /// <summary>POST without an ID creates; positive IDs update an editable draft using ExpectedRevision.</summary>
+    /// <summary>
+    /// One write path. A version ID updates that draft; otherwise a new version is created. Without a definition ID the
+    /// definition is new too. Revision is internal: it grows on every successful save and publish and is never sent by clients.
+    /// </summary>
     public async Task<WorkflowConfiguration> SaveAsync(SaveConfigurationRequest request, CancellationToken ct)
     {
-        if (request.Id is < 0) throw new ApiException(400, "ID cannot be negative.");
         if (request.Configuration is null) throw new ApiException(400, "Configuration is required.");
-        if (request.DefinitionId is not null) await new DefinitionIdValidator().ValidateAndThrowAsync(request.DefinitionId, ct);
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
-        WorkflowConfiguration row;
-        WorkflowDefinition definition;
-        if (request.Id is null or 0)
-        {
-            if (request.DefinitionId is not null)
-            {
-                await LockAsync(request.DefinitionId, ct);
-                if (await definitions.FindAsync(new WorkflowDefinitionFilter { DefinitionId = request.DefinitionId, VersionOptions = VersionOptions.Latest }, ct) is not null)
-                    throw new ApiException(409, "Definition ID already exists. Update its draft or create its next version.");
-                definition = await publisher.NewAsync(cancellationToken: ct);
-                definition.DefinitionId = request.DefinitionId;
-            }
-            else definition = await publisher.NewAsync(cancellationToken: ct);
-            row = new() { DefinitionId = definition.DefinitionId, DefinitionVersionId = definition.Id, DefinitionVersion = definition.Version };
-            db.WorkflowConfigurations.Add(row);
-        }
-        else
-        {
-            row = await GetAsync(request.Id.Value, ct);
-            if (request.DefinitionId is not null && request.DefinitionId != row.DefinitionId)
-                throw new ApiException(400, "Definition ID cannot be changed on an existing configuration.");
-            await LockAsync(row.DefinitionId, ct);
-            await db.Entry(row).ReloadAsync(ct);
-            CheckRevision(row, request.ExpectedRevision);
-            if (row.Frozen) throw new ApiException(409, "Published snapshots cannot be edited. Create the next draft.");
-            definition = await definitions.FindAsync(new WorkflowDefinitionFilter { Id = row.DefinitionVersionId }, ct) ?? throw new ApiException(409, "Elsa draft is missing.");
-            if (definition.IsPublished) throw new ApiException(409, "Elsa version is already published.");
-            row.Revision++;
-        }
+        var definitionId = Blank(request.WorkflowDefinitionId);
+        var versionId = Blank(request.WorkflowVersionId);
+        if (versionId is not null && definitionId is null)
+            throw new ApiException(400, "workflow_definition_id is required when workflow_version_id is supplied.");
+        if (definitionId is not null) await new DefinitionIdValidator().ValidateAndThrowAsync(definitionId, ct);
         var input = request.Configuration;
-        var setup = await MapConditionalAttributesAsync(row.DefinitionId, new WorkflowSetup(input.Name, [], input.StartStage, input.Stages, input.Supervisors), ct);
-        await validator.ValidateAndThrowAsync(setup, ct);
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var (row, definition, setup) = versionId is not null
+            ? await OpenDraftAsync(definitionId!, versionId, input, ct)
+            : await CreateVersionAsync(definitionId, input, ct);
         row.UsesAttributeCatalog = true;
         row.ConfigurationJson = ConfigurationJson.Write(setup);
         row.Ready = false;
         ApplySetup(definition, setup);
         await publisher.SaveDraftAsync(definition, ct);
+        // Elsa owns these identifiers; copy them only after the draft is stored so a new version carries its real ID.
+        row.DefinitionId = definition.DefinitionId;
+        row.DefinitionVersionId = definition.Id;
         row.DefinitionVersion = definition.Version;
         var storedDefinition = await definitions.FindAsync(new WorkflowDefinitionFilter { Id = definition.Id }, ct);
         row.DefinitionHash = Hash(storedDefinition!.StringData ?? "");
@@ -70,6 +52,64 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
         await transaction.CommitAsync(ct);
         return row;
     }
+
+    /// <summary>Update an existing draft version. Published or frozen versions are immutable.</summary>
+    private async Task<(WorkflowConfiguration Row, WorkflowDefinition Definition, WorkflowSetup Setup)> OpenDraftAsync(
+        string definitionId, string versionId, WorkflowSetupRequest input, CancellationToken ct)
+    {
+        var row = await GetAsync(definitionId, versionId, ct);
+        await LockAsync(row.DefinitionId, ct);
+        await db.Entry(row).ReloadAsync(ct);
+        if (row.Frozen) throw new ApiException(409, "Published versions cannot be edited. Omit workflow_version_id to create the next version.");
+        var definition = await definitions.FindAsync(new WorkflowDefinitionFilter { Id = row.DefinitionVersionId }, ct) ?? throw new ApiException(409, "Elsa draft is missing.");
+        if (definition.IsPublished) throw new ApiException(409, "Elsa version is already published.");
+        row.Revision++;
+        return (row, definition, await BuildSetupAsync(row.DefinitionId, input, ct));
+    }
+
+    /// <summary>Create a definition (generated or caller-chosen ID) or the next version of an existing one.</summary>
+    private async Task<(WorkflowConfiguration Row, WorkflowDefinition Definition, WorkflowSetup Setup)> CreateVersionAsync(
+        string? definitionId, WorkflowSetupRequest input, CancellationToken ct)
+    {
+        WorkflowDefinition definition;
+        if (definitionId is not null)
+        {
+            await LockAsync(definitionId, ct);
+            var latest = await definitions.FindAsync(new WorkflowDefinitionFilter { DefinitionId = definitionId, VersionOptions = VersionOptions.Latest }, ct);
+            if (latest is not null)
+            {
+                var open = await db.WorkflowConfigurations.FirstOrDefaultAsync(x => x.TenantId == "" && x.DefinitionId == definitionId && !x.Frozen, ct);
+                if (open is not null)
+                    throw new ApiException(409, $"Draft version {open.DefinitionVersion} ({open.DefinitionVersionId}) is still open. Send its workflow_version_id to update it, or publish it first.");
+                if (!await db.WorkflowConfigurations.AnyAsync(x => x.TenantId == "" && x.DefinitionId == definitionId, ct))
+                    throw new ApiException(409, "This definition exists in Elsa but was not created through workflow configurations.");
+                // Validate before Elsa creates the draft so a rejected request cannot leave an orphan version behind.
+                var nextSetup = await BuildSetupAsync(definitionId, input, ct);
+                definition = await publisher.GetDraftAsync(definitionId, VersionOptions.Published, ct) ?? throw new ApiException(409, "Published definition is missing.");
+                return (NewRow(definition), definition, nextSetup);
+            }
+        }
+        definition = await publisher.NewAsync(cancellationToken: ct);
+        if (definitionId is not null) definition.DefinitionId = definitionId;
+        return (NewRow(definition), definition, await BuildSetupAsync(definition.DefinitionId, input, ct));
+    }
+
+    private WorkflowConfiguration NewRow(WorkflowDefinition definition)
+    {
+        var row = new WorkflowConfiguration { DefinitionId = definition.DefinitionId, DefinitionVersionId = definition.Id, DefinitionVersion = definition.Version };
+        db.WorkflowConfigurations.Add(row);
+        return row;
+    }
+
+    private async Task<WorkflowSetup> BuildSetupAsync(string definitionId, WorkflowSetupRequest input, CancellationToken ct)
+    {
+        var setup = await MapConditionalAttributesAsync(definitionId, new WorkflowSetup(input.Name, [], input.StartStage, input.Stages, input.Supervisors), ct);
+        await validator.ValidateAndThrowAsync(setup, ct);
+        return setup;
+    }
+
+    private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
+
     private async Task<WorkflowSetup> MapConditionalAttributesAsync(string definitionId, WorkflowSetup setup, CancellationToken ct)
     {
         // Collect keys from both kinds of conditions. Leave malformed rules to FluentValidation.
@@ -93,16 +133,16 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
         return setup with { Attributes = fields.Select(x => x.ToDefinition() with { Required = true }).ToArray() };
     }
 
-    public async Task ValidateAsync(long id, CancellationToken ct) => await validator.ValidateAndThrowAsync(ConfigurationJson.Read<WorkflowSetup>((await GetAsync(id, ct)).ConfigurationJson), ct);
+    public async Task ValidateAsync(string workflowDefinitionId, string workflowVersionId, CancellationToken ct) =>
+        await validator.ValidateAndThrowAsync(ConfigurationJson.Read<WorkflowSetup>((await GetAsync(workflowDefinitionId, workflowVersionId, ct)).ConfigurationJson), ct);
 
     /// <summary>Ready is committed only after native publication succeeds. Failed partial publication cannot execute.</summary>
-    public async Task<WorkflowConfiguration> PublishAsync(long id, long expectedRevision, CancellationToken ct)
+    public async Task<WorkflowConfiguration> PublishAsync(string workflowDefinitionId, string workflowVersionId, CancellationToken ct)
     {
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
-        var row = await GetAsync(id, ct);
+        var row = await GetAsync(workflowDefinitionId, workflowVersionId, ct);
         await LockAsync(row.DefinitionId, ct);
         await db.Entry(row).ReloadAsync(ct);
-        CheckRevision(row, expectedRevision);
         if (row.Ready) return row;
         await validator.ValidateAndThrowAsync(ConfigurationJson.Read<WorkflowSetup>(row.ConfigurationJson), ct);
         var definition = await definitions.FindAsync(new WorkflowDefinitionFilter { Id = row.DefinitionVersionId }, ct) ?? throw new ApiException(409, "Elsa draft is missing.");
@@ -116,32 +156,6 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
         row.Frozen = true;
         row.Ready = true;
         row.Revision++;
-        await db.SaveChangesAsync(ct);
-        await transaction.CommitAsync(ct);
-        return row;
-    }
-    public async Task<WorkflowConfiguration> CreateNextDraftAsync(long id, long expectedRevision, CancellationToken ct)
-    {
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
-        var source = await GetAsync(id, ct);
-        await LockAsync(source.DefinitionId, ct);
-        await db.Entry(source).ReloadAsync(ct);
-        CheckRevision(source, expectedRevision);
-        if (!source.Ready) throw new ApiException(409, "Publish the source version first.");
-        var existing = await db.WorkflowConfigurations.FirstOrDefaultAsync(x => x.DefinitionId == source.DefinitionId && !x.Frozen, ct);
-        if (existing is not null) return existing;
-        // Clone the active published native version, even when the requested source snapshot is historical.
-        // Rebuild from that source's configuration so its schema and generated graph remain aligned.
-        var setup = ConfigurationJson.Read<WorkflowSetup>(source.ConfigurationJson);
-        setup = await MapConditionalAttributesAsync(source.DefinitionId, setup, ct);
-        await validator.ValidateAndThrowAsync(setup, ct);
-        var draft = await publisher.GetDraftAsync(source.DefinitionId, VersionOptions.Published, ct) ?? throw new ApiException(409, "Published definition is missing.");
-        ApplySetup(draft, setup);
-        await publisher.SaveDraftAsync(draft, ct);
-        var storedDraft = await definitions.FindAsync(new WorkflowDefinitionFilter { Id = draft.Id }, ct);
-        var row = new WorkflowConfiguration { DefinitionId = draft.DefinitionId, DefinitionVersionId = draft.Id,
-            DefinitionVersion = draft.Version, ConfigurationJson = ConfigurationJson.Write(setup), UsesAttributeCatalog = true, DefinitionHash = Hash(storedDraft!.StringData ?? "") };
-        db.WorkflowConfigurations.Add(row);
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
         return row;
@@ -174,8 +188,4 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
     // Native Elsa contexts commit independently; Ready + hash checks are the admission gate, not a distributed transaction.
     private Task<int> LockAsync(string definitionId, CancellationToken ct) =>
         db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtextextended({definitionId}, 0))", ct);
-    private static void CheckRevision(WorkflowConfiguration row, long? revision)
-    {
-        if (revision != row.Revision) throw new ApiException(409, "ExpectedRevision must match the current configuration revision.");
-    }
 }

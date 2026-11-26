@@ -41,7 +41,7 @@ public sealed class AttributeCatalogTests(ITestOutputHelper output)
                 },
             },
         });
-        var body = new JsonObject { ["id"] = 0, ["definition_id"] = definition, ["configuration"] = setup };
+        var body = new JsonObject { ["workflowDefinitionId"] = definition, ["configuration"] = setup };
         var stage = setup["stages"]![0]!;
         var condition = stage["approveRules"]![0]!["conditions"]![0]!;
         foreach (var invalid in new[] { "obsolete", "foreignField", "unknown" })
@@ -56,7 +56,7 @@ public sealed class AttributeCatalogTests(ITestOutputHelper output)
         assignment["policy"] = "Condition";
         assignment["rules"] = Node(new[] { new { conditions = new[] { new { attribute = "department", @operator = "Equals", value = "Finance" } }, userId = aliceId } });
         var config = await api.PostAsync("/api/workflow-configurations", body);
-        Assert.Equal(definition, (string)config["definitionId"]!);
+        Assert.Equal(definition, (string)config["workflowDefinitionId"]!);
         Assert.Equal(
             new Dictionary<string, bool> { ["claimAmount"] = true, ["department"] = true },
             config["configuration"]!["attributes"]!.AsArray().ToDictionary(x => (string)x!["key"]!, x => (bool)x!["required"]!));
@@ -65,10 +65,10 @@ public sealed class AttributeCatalogTests(ITestOutputHelper output)
         // Inline attributes are ignored; the catalog is authoritative.
         setup["attributes"] = Node(new[] { new { key = "injected", type = "String", required = true } });
         var updated = await api.PostAsync("/api/workflow-configurations",
-            new JsonObject { ["id"] = config["id"]!.DeepClone(), ["expectedRevision"] = config["revision"]!.DeepClone(), ["configuration"] = setup.DeepClone() });
+            new JsonObject { ["workflowDefinitionId"] = definition, ["workflowVersionId"] = config["workflowVersionId"]!.DeepClone(), ["configuration"] = setup.DeepClone() });
         Assert.Equal(["claimAmount", "department"], Keys(updated));
-        var configId = config["id"]!.ToString();
-        var published = await api.PostAsync($"/api/workflow-configurations/{configId}/publish", new JsonObject { ["expectedRevision"] = updated["revision"]!.DeepClone() });
+        var versionId = config["workflowVersionId"]!.ToString();
+        var published = await api.PostAsync($"/api/workflow-configurations/{definition}/versions/{versionId}/publish", null);
 
         foreach (var attributes in new object[] { new { claimAmount = 6000 }, new { firstName = "John", claimAmount = 6000, department = "Finance" } })
             await api.PostAsync($"/elsa/api/workflow-definitions/{definition}/execute", new { input = new { attributes } }, "admin", 400);
@@ -76,14 +76,17 @@ public sealed class AttributeCatalogTests(ITestOutputHelper output)
             new { input = new { attributes = new { claimAmount = 6000, department = "Finance" } } }))["workflowState"]!["id"]!;
         Assert.Equal(definition, (string)(await api.GetAsync("/elsa/api/workflow-instances/" + instance))["definitionId"]!);
 
-        var nextDraft = await api.PostAsync($"/api/workflow-configurations/{configId}/next-draft", new JsonObject { ["expectedRevision"] = published["revision"]!.DeepClone() });
+        // No version ID: the published definition gets its next version.
+        var nextDraft = await api.PostAsync("/api/workflow-configurations", new JsonObject { ["workflowDefinitionId"] = definition, ["configuration"] = setup.DeepClone() });
+        Assert.NotEqual(versionId, nextDraft["workflowVersionId"]!.ToString());
+        Assert.Equal((int)published["versionNumber"]! + 1, (int)nextDraft["versionNumber"]!);
         Assert.Equal(["claimAmount", "department"], Keys(nextDraft));
         stage["approveRules"] = new JsonArray();
         stage["assignment"] = new JsonObject { ["policy"] = "Specific", ["members"] = assignment["members"]!.DeepClone(), ["userId"] = assignment["userId"]!.DeepClone() };
         var empty = await api.PostAsync("/api/workflow-configurations",
-            new JsonObject { ["id"] = nextDraft["id"]!.DeepClone(), ["expectedRevision"] = nextDraft["revision"]!.DeepClone(), ["configuration"] = setup.DeepClone() });
+            new JsonObject { ["workflowDefinitionId"] = definition, ["workflowVersionId"] = nextDraft["workflowVersionId"]!.DeepClone(), ["configuration"] = setup.DeepClone() });
         Assert.Empty(empty["configuration"]!["attributes"]!.AsArray());
-        Assert.Equal(2, (await api.GetAsync($"/api/workflow-configurations/{configId}"))["configuration"]!["attributes"]!.AsArray().Count);
+        Assert.Equal(2, (await api.GetAsync($"/api/workflow-configurations/{definition}/versions/{versionId}"))["configuration"]!["attributes"]!.AsArray().Count);
 
         await api.PostAsync("/api/workflow-attributes", new { definitionId = definition, attribute = new { key = "bad", type = "String" } }, "alice", 403);
         var task = (await api.GetAsync($"/elsa/api/user-tasks?scope=assigned&status=Assigned&workflowInstanceId={instance}", "alice"))["items"]![0]!;
