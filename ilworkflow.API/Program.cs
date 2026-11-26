@@ -129,6 +129,7 @@ if (!swaggerPreview)
     await using var scope = app.Services.CreateAsyncScope();
     await scope.ServiceProvider.GetRequiredService<ApplicationDbContext>().Database.MigrateAsync();
 }
+if (app.Environment.IsDevelopment()) app.UseSwaggerSnakeCase();
 app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();

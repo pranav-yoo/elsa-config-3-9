@@ -13,6 +13,6 @@ namespace IlWorkflow.Contracts.WorkflowConfigurations.Requests;
 /// </summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record SaveConfigurationRequest(
-    [property: JsonPropertyName("workflow_definition_id")] string? WorkflowDefinitionId,
-    [property: JsonPropertyName("workflow_version")] int? WorkflowVersion,
+    string? WorkflowDefinitionId,
+    int? WorkflowVersion,
     WorkflowSetupRequest Configuration);
