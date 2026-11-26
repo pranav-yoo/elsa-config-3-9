@@ -23,7 +23,7 @@ public sealed class ConfiguredWorkflowTests(ITestOutputHelper output) : IDisposa
         await api.LoginAsync("admin", "admin", "password");
         var document = await api.GetAsync("/swagger/v3/swagger.json", null);
         Assert.Contains(document["paths"]!.AsObject(), p => p.Key.Contains("workflow-configurations"));
-        await api.SendAsync("GET", "/api/workflow-configurations/anything/versions/anything", null, "admin", 503);
+        await api.SendAsync("POST", "/api/workflow-configurations/get", new { workflowDefinitionId = "anything" }, "admin", 503);
         await api.SendAsync("POST", "/elsa/api/workflow-definitions/anything/execute", new { }, "admin", 503);
         await api.SendAsync("POST", "/elsa/api/user-tasks/anything/complete", new { }, "admin", 503);
         output.WriteLine("PASS documentation preview: Swagger loads and configuration/execution/task mutations return 503");
@@ -38,7 +38,7 @@ public sealed class ConfiguredWorkflowTests(ITestOutputHelper output) : IDisposa
         var saved = JsonNode.Parse(await File.ReadAllTextAsync(StatePath, TestContext.Current.CancellationToken))!;
         var savedIds = saved["userIds"]!.AsObject().ToDictionary(x => x.Key, x => (string)x.Value!);
         Assert.True(savedIds.OrderBy(x => x.Key).SequenceEqual(ids.OrderBy(x => x.Key)), "Native user IDs did not survive restart");
-        var config = await api.GetAsync($"/api/workflow-configurations/{saved["workflowDefinitionId"]}/versions/{saved["workflowVersion"]}");
+        var config = await api.PostAsync("/api/workflow-configurations/get", new JsonObject { ["workflowDefinitionId"] = saved["workflowDefinitionId"]!.DeepClone(), ["workflowVersion"] = saved["workflowVersion"]!.DeepClone() });
         Assert.Equal(saved["workflowVersion"]!.ToString(), config["workflowVersion"]!.ToString());
         Assert.True((bool)config["isPublished"]!);
         var pending = (string)saved["pendingInstance"]!;

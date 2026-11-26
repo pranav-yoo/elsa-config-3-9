@@ -17,11 +17,12 @@ public sealed class WorkflowConfigurationController(IWorkflowConfigurationServic
     public async Task<IActionResult> Save([FromBody] SaveConfigurationRequest request, CancellationToken ct) =>
         ApiResultHelper.Ok(ToResponse(await service.SaveAsync(request, ct)));
 
-    /// <summary>Read one configuration version. Without a version number (<c>GET {workflow_definition_id}</c>) the latest version is returned.</summary>
-    [HttpGet("{workflowDefinitionId}")]
-    [HttpGet("{workflowDefinitionId}/versions/{workflowVersion:int}")]
-    public async Task<IActionResult> Get(string workflowDefinitionId, int? workflowVersion, CancellationToken ct) =>
-        ApiResultHelper.Ok(ToResponse(await service.GetAsync(workflowDefinitionId, workflowVersion, ct)));
+    /// <summary>Read one configuration version. workflow_version is optional: without it the latest version is returned.</summary>
+    [HttpPost("get")]
+    public async Task<IActionResult> Get([FromBody] GetConfigurationRequest request, CancellationToken ct) =>
+        ApiResultHelper.Ok(ToResponse(await service.GetAsync(
+            string.IsNullOrWhiteSpace(request.WorkflowDefinitionId) ? throw new ApiException(400, "workflow_definition_id is required.") : request.WorkflowDefinitionId,
+            request.WorkflowVersion, ct)));
 
     /// <summary>Run FluentValidation without changing or publishing the configuration.</summary>
     [HttpPost("{workflowDefinitionId}/versions/{workflowVersion:int}/validate")]

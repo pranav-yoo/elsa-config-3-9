@@ -47,6 +47,12 @@ public sealed class ConfigurationVersionTests(ITestOutputHelper output)
             if (versionId is not null) body["workflowVersion"] = versionId.Value;
             return api.PostAsync("/api/workflow-configurations", body, actor, expected);
         }
+        Task<JsonNode> Get(object definitionId, int? version = null, string? actor = "admin", params int[] expected)
+        {
+            var body = new JsonObject { ["workflowDefinitionId"] = definitionId.ToString() };
+            if (version is not null) body["workflowVersion"] = version.Value;
+            return api.PostAsync("/api/workflow-configurations/get", body, actor, expected);
+        }
         static string Path(JsonNode config, string suffix = "")
             => $"/api/workflow-configurations/{config["workflowDefinitionId"]}/versions/{config["workflowVersion"]}{suffix}";
 
@@ -74,11 +80,12 @@ public sealed class ConfigurationVersionTests(ITestOutputHelper output)
         var v1c = await Save(definitionId, (int)v1["workflowVersion"]!, "Renamed again");
         Assert.Equal(3L, (long)v1c["revision"]!);
         Assert.Equal(1, (int)v1c["workflowVersion"]!);
-        Assert.Equal(v1c.ToJsonString(), (await api.GetAsync(Path(v1c))).ToJsonString());
+        Assert.Equal(v1c.ToJsonString(), (await Get(definitionId, 1)).ToJsonString());
         Assert.Empty(v1c["configuration"]!["attributes"]!.AsArray()); // attributes are not configurable for now
         // GET without a version returns the latest version.
-        Assert.Equal(v1c.ToJsonString(), (await api.GetAsync($"/api/workflow-configurations/{definitionId}")).ToJsonString());
-        await api.SendAsync("GET", "/api/workflow-configurations/no-such-definition", null, "admin", 404);
+        Assert.Equal(v1c.ToJsonString(), (await Get(definitionId)).ToJsonString());
+        await Get("no-such-definition", null, "admin", 404);
+        await api.PostAsync("/api/workflow-configurations/get", new JsonObject { ["workflowVersion"] = 1 }, "admin", 400); // definition required
 
         // 4. Definition ID only while a draft is open: refused (one open draft per definition).
         await Save(definitionId, null, "Second draft", "admin", 409);
@@ -111,15 +118,15 @@ public sealed class ConfigurationVersionTests(ITestOutputHelper output)
                 Assert.Equal(2, (int)v2["workflowVersion"]!);
         Assert.Equal(1L, (long)v2["revision"]!);
         Assert.False((bool)v2["isPublished"]!);
-        var latest = await api.GetAsync($"/api/workflow-configurations/{definitionId}");
+        var latest = await Get(definitionId);
         Assert.Equal(2, (int)latest["workflowVersion"]!);
-        Assert.Equal(1, (int)(await api.GetAsync(Path(v1c)))["workflowVersion"]!); // explicit version still wins
+        Assert.Equal(1, (int)(await Get(definitionId, 1))["workflowVersion"]!); // explicit version still wins
 
         // 9. Updating v2 never touches v1.
         var v2b = await Save(definitionId, (int)v2["workflowVersion"]!, "Second edited");
         Assert.Equal(2L, (long)v2b["revision"]!);
         Assert.Equal(2, (int)v2b["workflowVersion"]!);
-        var v1Again = await api.GetAsync(Path(v1c));
+        var v1Again = await Get(definitionId, 1);
         Assert.True((bool)v1Again["isPublished"]!);
         Assert.Equal("Renamed again", (string)v1Again["configuration"]!["name"]!);
 
@@ -133,8 +140,8 @@ public sealed class ConfigurationVersionTests(ITestOutputHelper output)
         // 11. Permissions and unknown targets.
         await api.LoginAsync("approver", "config-version-approver", "Password123!");
         await Save(null, null, "x", "approver", 403);
-        await api.SendAsync("GET", Path(v1c), null, "approver", 403);
-        await api.SendAsync("GET", $"/api/workflow-configurations/{definitionId}/versions/999", null, "admin", 404);
+        await Get(definitionId, 1, "approver", 403);
+        await Get(definitionId, 999, "admin", 404);
         await api.SendAsync("POST", $"/api/workflow-configurations/{definitionId}/versions/999/publish", null, "admin", 404);
         await api.SendAsync("POST", "/api/workflow-configurations", new JsonObject { ["configuration"] = Setup("x") }, null, 401);
 

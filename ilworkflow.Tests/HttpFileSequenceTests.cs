@@ -50,7 +50,7 @@ public sealed class HttpFileSequenceTests(ITestOutputHelper output) : IDisposabl
         Assert.NotEqual((string)first["items"]![0]!["id"]!, (string)second["items"]![0]!["id"]!);
 
         var published = responses["observerPublished"]!["data"]!; // /api responses use the { trace_id, messages, data } envelope
-        var current = await api.GetAsync($"/api/workflow-configurations/{published["workflow_definition_id"]}/versions/{published["workflow_version"]}");
+        var current = await api.PostAsync("/api/workflow-configurations/get", new JsonObject { ["workflowDefinitionId"] = published["workflow_definition_id"]!.DeepClone(), ["workflowVersion"] = published["workflow_version"]!.DeepClone() });
         var setup = current["configuration"]!.AsObject();
         setup.Remove("attributes");
         setup["stages"]![0]!.AsObject().Remove("viewableByStages");

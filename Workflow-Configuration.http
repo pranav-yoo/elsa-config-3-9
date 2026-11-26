@@ -107,9 +107,16 @@ Content-Type: application/json
 
 
 ### Read draft
+# POST so both keys travel in the body. workflow_version is optional: omit it to read the latest version.
 # @name readConfiguration
-GET {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.data.workflow_definition_id}}/versions/{{createConfiguration.response.body.$.data.workflow_version}}
+POST {{baseUrl}}/api/workflow-configurations/get
 Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "workflow_definition_id": "{{createConfiguration.response.body.$.data.workflow_definition_id}}",
+  "workflow_version": {{createConfiguration.response.body.$.data.workflow_version}}
+}
 
 
 ### Update same draft using POST
