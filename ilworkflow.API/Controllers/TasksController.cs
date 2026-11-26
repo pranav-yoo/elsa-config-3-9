@@ -19,7 +19,7 @@ public sealed class TasksController(TaskService tasks) : ControllerBase
     public async Task<IActionResult> List([FromQuery] string scope = "assigned", [FromQuery] string? status = null,
         [FromQuery(Name = "workflow_instance_id")] string? workflowInstanceId = null, [FromQuery] string? cursor = null, [FromQuery] int limit = 50,
         [FromQuery(Name = "include_total_count")] bool includeTotalCount = false, CancellationToken ct = default) =>
-        ApiResultHelper.Ok(await tasks.ListAsync(User, scope, status, workflowInstanceId, cursor, limit, includeTotalCount, ct));
+        ApiResultHelper.Ok(await tasks.ListAsync(User, new ListTasksRequest(scope, status, workflowInstanceId, cursor, limit, includeTotalCount), ct));
 
     /// <summary>Task detail, including its actions (buttons) and allowedActions for the caller.</summary>
     [HttpGet("{taskId}")]

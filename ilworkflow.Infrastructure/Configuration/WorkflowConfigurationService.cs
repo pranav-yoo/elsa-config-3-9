@@ -31,12 +31,9 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
     /// </summary>
     public async Task<WorkflowConfiguration> SaveAsync(SaveConfigurationRequest request, CancellationToken ct)
     {
-        if (request.Configuration is null) throw new ApiException(400, "Configuration is required.");
+        await new SaveConfigurationRequestValidator().ValidateAndThrowAsync(request, ct);
         var definitionId = Blank(request.WorkflowDefinitionId);
         var version = request.WorkflowVersion;
-        if (version is not null && definitionId is null)
-            throw new ApiException(400, "workflow_definition_id is required when workflow_version is supplied.");
-        if (definitionId is not null) await new DefinitionIdValidator().ValidateAndThrowAsync(definitionId, ct);
         var input = request.Configuration;
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var (row, definition, setup) = version is not null

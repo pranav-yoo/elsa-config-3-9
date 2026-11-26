@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Elsa.UserTasks.Contracts;
+using FluentValidation;
 using Elsa.UserTasks.Models;
 using IlWorkflow.Api.Workflows;
 
@@ -19,38 +20,33 @@ public sealed class TaskService(IUserTaskManager manager, IUserTaskIdentityResol
     private const string Tenant = "";
     private static readonly System.Text.Json.JsonElement EmptyData = System.Text.Json.JsonSerializer.SerializeToElement(new { });
 
-    public async Task<UserTaskQueryResultDto> ListAsync(ClaimsPrincipal user, string scope, string? status, string? workflowInstanceId,
-        string? cursor, int limit, bool includeTotalCount, CancellationToken ct)
+    public async Task<UserTaskQueryResultDto> ListAsync(ClaimsPrincipal user, ListTasksRequest request, CancellationToken ct)
     {
         var actor = await ActorAsync(user, "view", ct);
-        if (limit is < 1 or > 100) throw new ApiException(400, "limit must be between 1 and 100.");
-        UserTaskStatus? parsedStatus = null;
-        if (!string.IsNullOrWhiteSpace(status))
-            parsedStatus = Enum.TryParse<UserTaskStatus>(status, true, out var s) && Enum.IsDefined(s) ? s : throw new ApiException(400, "Unknown task status.");
+        await new ListTasksRequestValidator().ValidateAndThrowAsync(request, ct);
+        var scope = request.Scope.ToLowerInvariant();
+        UserTaskStatus? status = string.IsNullOrWhiteSpace(request.Status) ? null : Enum.Parse<UserTaskStatus>(request.Status, true);
 
-        switch (scope.ToLowerInvariant())
+        // Read-only scopes of this application: viewableByStages and workflow supervisors.
+        if (scope is "observed" or "supervised")
         {
-            // Read-only scopes of this application: viewableByStages and workflow supervisors.
-            case "observed" or "supervised":
-                var observed = services.GetService<ObservedUserTasks>() ?? throw new ApiException(503, "Observed/supervised lists require PostgreSQL.");
-                return await observed.QueryAsync(actor, workflowInstanceId, parsedStatus, cursor, Math.Min(limit, 50), includeTotalCount, ct,
-                    supervised: scope.Equals("supervised", StringComparison.OrdinalIgnoreCase));
-            default:
-                var kind = scope.ToLowerInvariant() switch
-                {
-                    "assigned" => UserTaskQueryScopeKind.Assigned,
-                    "available" => UserTaskQueryScopeKind.Available,
-                    "history" => UserTaskQueryScopeKind.History,
-                    "all" => UserTaskQueryScopeKind.All,
-                    _ => throw new ApiException(400, "scope must be assigned, available, history, all, observed or supervised.")
-                };
-                return await manager.QueryAsync(new UserTaskQuery
-                {
-                    TenantId = Tenant, Limit = limit, Cursor = cursor, WorkflowInstanceId = workflowInstanceId,
-                    Statuses = parsedStatus is { } st ? [st] : [], IncludeTotalCount = includeTotalCount,
-                    Sort = "created", Descending = true
-                }, kind, actor, ct);
+            var observed = services.GetService<ObservedUserTasks>() ?? throw new ApiException(503, "Observed/supervised lists require PostgreSQL.");
+            return await observed.QueryAsync(actor, request.WorkflowInstanceId, status, request.Cursor, Math.Min(request.Limit, 50),
+                request.IncludeTotalCount, ct, supervised: scope == "supervised");
         }
+        var kind = scope switch
+        {
+            "assigned" => UserTaskQueryScopeKind.Assigned,
+            "available" => UserTaskQueryScopeKind.Available,
+            "history" => UserTaskQueryScopeKind.History,
+            _ => UserTaskQueryScopeKind.All
+        };
+        return await manager.QueryAsync(new UserTaskQuery
+        {
+            TenantId = Tenant, Limit = request.Limit, Cursor = request.Cursor, WorkflowInstanceId = request.WorkflowInstanceId,
+            Statuses = status is { } st ? [st] : [], IncludeTotalCount = request.IncludeTotalCount,
+            Sort = "created", Descending = true
+        }, kind, actor, ct);
     }
 
     public async Task<UserTaskDetail> GetAsync(ClaimsPrincipal user, string taskId, CancellationToken ct) =>
@@ -76,7 +72,7 @@ public sealed class TaskService(IUserTaskManager manager, IUserTaskIdentityResol
 
     public async Task<TaskCommandResult> AssignAsync(ClaimsPrincipal user, string taskId, AssignTaskRequest request, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(request.UserId)) throw new ApiException(400, "userId is required.");
+        await new AssignTaskRequestValidator().ValidateAndThrowAsync(request, ct);
         var actor = await ActorAsync(user, "assign", ct);
         var assign = new UserTaskAssignRequest(await RevisionAsync(taskId, request.ExpectedRevision, ct), TicketState.User(request.UserId),
             request.Reason!, OperationId(request.OperationId));
@@ -85,7 +81,7 @@ public sealed class TaskService(IUserTaskManager manager, IUserTaskIdentityResol
 
     public async Task<TaskCommandResult> CompleteAsync(ClaimsPrincipal user, string taskId, CompleteTaskRequest request, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(request.ActionKey)) throw new ApiException(400, "actionKey is required.");
+        await new CompleteTaskRequestValidator().ValidateAndThrowAsync(request, ct);
         var actor = await ActorAsync(user, "complete", ct);
         // Data is validated by the task's form provider (reason/comment rules, RESUBMIT attributes) inside Elsa.
         var completion = new UserTaskCompletionRequest(await RevisionAsync(taskId, request.ExpectedRevision, ct), OperationId(request.OperationId),

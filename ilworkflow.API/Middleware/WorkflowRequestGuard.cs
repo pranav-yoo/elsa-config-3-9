@@ -163,13 +163,11 @@ public sealed class WorkflowRequestGuard(RequestDelegate next, IConfiguration co
             throw new ApiException(409, "Workflow publication/configuration is incomplete or changed outside its configuration API.");
 
         var body = await ReadObjectAsync(http);
-        if (body.Any(property => property.Key is not ("input" or "correlationId" or "name" or "versionOptions")))
-            throw new ApiException(400, "Custom variables and alternate activity starts are not permitted for configured tickets.");
+        await new ExecuteRequestValidator().ValidateAndThrowAsync(body, http.RequestAborted);
         var input = body["input"] as JsonObject ?? new JsonObject();
         var requester = http.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? http.User.FindFirstValue("sub");
         if (string.IsNullOrWhiteSpace(requester)) throw new ApiException(403, "A stable authenticated user ID is required.");
         if (input["requesterId"] is { } supplied && supplied.ToString() != requester) throw new ApiException(403, "Requester impersonation is not permitted.");
-        if (input.Any(x => x.Key != "attributes" && x.Key != "requesterId")) throw new ApiException(400, "Supply ticket fields inside input.attributes.");
         var setup = ConfigurationJson.Read<WorkflowSetup>(row.ConfigurationJson);
         var values = input["attributes"] is JsonObject attributeObject
             ? attributeObject.Deserialize<Dictionary<string, JsonElement>>()! : new Dictionary<string, JsonElement>();
@@ -205,7 +203,8 @@ public sealed class WorkflowRequestGuard(RequestDelegate next, IConfiguration co
         var includeTotalCount = false;
         if (query.TryGetValue("includeTotalCount", out var rawTotal) && !bool.TryParse(rawTotal, out includeTotalCount))
             throw new ApiException(400, "includeTotalCount must be true or false.");
-        var result = await tasks.ListAsync(http.User, scope, query["status"], query["workflowInstanceId"], query["cursor"], limit, includeTotalCount, http.RequestAborted);
+        var result = await tasks.ListAsync(http.User,
+            new ListTasksRequest(scope, query["status"], query["workflowInstanceId"], query["cursor"], limit, includeTotalCount), http.RequestAborted);
         await http.Response.WriteAsJsonAsync(result, http.RequestAborted);
     }
 
