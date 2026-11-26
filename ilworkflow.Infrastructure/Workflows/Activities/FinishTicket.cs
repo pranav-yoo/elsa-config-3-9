@@ -12,7 +12,6 @@ public sealed class FinishTicket : Activity
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
         var outcome = Enum.Parse<TicketOutcome>(Outcome.Get(context));
-        if (outcome is not (TicketOutcome.Approved or TicketOutcome.Rejected)) throw new InvalidOperationException("A terminal outcome is required.");
         context.WorkflowExecutionContext.Output["ticketOutcome"] = outcome.ToString();
         context.WorkflowExecutionContext.Output["currentStage"] = null!;
         await context.CompleteActivityAsync();

@@ -15,7 +15,7 @@ using ConfigJson = IlWorkflow.Application.Common.ConfigurationJson;
 namespace IlWorkflow.Api.Workflows;
 
 [Activity("Tickets", "Tickets", "Schedules one native approval or correction task.")]
-[FlowNode(StagePorts.Action, StagePorts.Resubmit)]
+[FlowNode("Action", "Resubmit")]
 public sealed class TicketReview : Activity
 {
     [Input] public Input<string> ConfigurationJson { get; set; } = null!;
@@ -111,14 +111,13 @@ public sealed class TicketReview : Activity
         if (!string.Equals(stimulus.ActionKey, TaskActionKeys.Resubmit, StringComparison.OrdinalIgnoreCase))
         {
             // A configured stage action. The form provider already checked it belongs to this stage.
-            var action = StageOf(context)?.Actions?.FirstOrDefault(x => string.Equals(x.Key, stimulus.ActionKey, StringComparison.OrdinalIgnoreCase))
-                ?? throw new InvalidOperationException("Unknown task action.");
+            var action = StageOf(context)!.Actions!.First(x => string.Equals(x.Key, stimulus.ActionKey, StringComparison.OrdinalIgnoreCase));
             if (!parallelBranch)
             {
                 context.ExpressionExecutionContext.SetVariable("lastAction", action.Key);
                 context.WorkflowExecutionContext.Output["lastDecision"] = action.Key;
             }
-            await context.CompleteActivityWithOutcomesAsync(StagePorts.Action);
+            await context.CompleteActivityWithOutcomesAsync("Action");
             return;
         }
         // A correction task: the form provider already validated the payload. Revalidate at the execution boundary,
@@ -136,6 +135,6 @@ public sealed class TicketReview : Activity
         output["attributeRevision"] = revision;
         output["attributeHistory"] = JsonSerializer.SerializeToElement(history);
         TicketState.SetAttributes(context, attributes, schema);
-        await context.CompleteActivityWithOutcomesAsync(StagePorts.Resubmit);
+        await context.CompleteActivityWithOutcomesAsync("Resubmit");
     }
 }

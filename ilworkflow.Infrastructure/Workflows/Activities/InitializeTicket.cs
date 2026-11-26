@@ -18,7 +18,6 @@ public sealed class InitializeTicket : Activity
         var values = context.GetWorkflowInput<Dictionary<string, JsonElement>>("attributes");
         await new TicketInputValidator(setup).ValidateAndThrowAsync(values, context.CancellationToken);
         var requester = context.GetWorkflowInput<string>("requesterId");
-        if (string.IsNullOrWhiteSpace(requester)) throw new InvalidOperationException("Requester must be supplied by the authenticated execute guard.");
         var output = context.WorkflowExecutionContext.Output;
         output["requesterId"] = requester;
         output["ticketOutcome"] = TicketOutcome.InReview.ToString();

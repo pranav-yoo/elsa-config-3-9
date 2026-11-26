@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using System.Text.Json;
 using Elsa.Extensions;
 using Elsa.UserTasks.Models;
@@ -22,10 +23,7 @@ public static class TicketState
             foreach (var action in stage.Actions ?? [])
                 for (var index = 0; index < (action.Rules?.Length ?? 0); index++)
                     routes[StageAction.RouteKey(stage.Key, action.Key, index)] = AttributeRules.Matches(action.Rules![index].Conditions, values);
-        var snapshot = JsonSerializer.SerializeToNode(values)!;
-        snapshot["$routes"] = JsonSerializer.SerializeToNode(routes);
-        // Keep the original fields for existing persisted graphs. New graphs read only $routes;
-        // public attributes/task data stay free of this internal metadata.
-        context.ExpressionExecutionContext.SetVariable("attributesJson", snapshot.ToJsonString());
+        // The generated graph reads only these route results, never the attribute values themselves.
+        context.ExpressionExecutionContext.SetVariable("attributesJson", new JsonObject { ["$routes"] = JsonSerializer.SerializeToNode(routes) }.ToJsonString());
     }
 }
