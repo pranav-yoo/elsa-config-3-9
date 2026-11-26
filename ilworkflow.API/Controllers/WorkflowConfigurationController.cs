@@ -27,7 +27,7 @@ public sealed class WorkflowConfigurationController(IWorkflowConfigurationServic
     public async Task<IActionResult> Validate(string workflowDefinitionId, string workflowVersionId, CancellationToken ct)
     {
         await service.ValidateAsync(workflowDefinitionId, workflowVersionId, ct);
-        return Ok(new { valid = true });
+        return Ok(new ValidateConfigurationResponse(true));
     }
 
     /// <summary>Publish through Elsa; the bound snapshot becomes immutable only when publication succeeds.</summary>

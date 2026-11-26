@@ -8,7 +8,8 @@ API -> Infrastructure -> Application / Domain
 ```
 
 - **Domain:** WorkflowConfiguration.cs contains the entity, enums and value records. AttributeRules.cs contains exact comparisons and field constraints. No external package dependencies.
-- **Application:** Contracts.cs contains DTOs, JSON helpers, errors and the IWorkflowConfigurationService/IApproverDirectory ports. Validators enforce configuration/input/decision rules. AssignmentResolver selects eligible participants through the directory port. References Domain and FluentValidation only.
+- **Contracts:** every HTTP request and response model, grouped by module (`WorkflowConfigurations`, `WorkflowAttributes`, `Tasks`). It references Domain for the shared value types (stages, attribute definitions) and has no Elsa, EF Core or ASP.NET dependency. Elsa's own native response types stay with Elsa.
+- **Application:** Abstractions.cs contains JSON helpers, errors and the IWorkflowConfigurationService/IWorkflowAttributeService/IApproverDirectory ports. Validators enforce configuration/input/decision rules. AssignmentResolver selects eligible participants through the directory port. References Domain and FluentValidation only.
 - **Infrastructure:** WorkflowConfigurationService implements the application port using EF and native Elsa publishing. Persistence contains the existing migration and provider fixes. Workflows contains graph generation, review activities and the form adapter. Tickets/TicketIdentity resolves approver roles from Elsa Identity. Authorization contains native participation checks.
 - **API:** Controllers bind requests; middleware guards native execution. Services/WorkflowServiceRegistration.cs connects ports/adapters and registers Elsa/custom services. Program.cs owns startup, diagnostics, database initialization and the request pipeline.
 

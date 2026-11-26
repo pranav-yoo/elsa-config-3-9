@@ -4,3 +4,6 @@ global using IlWorkflow.Infrastructure.Authorization;
 global using IlWorkflow.Infrastructure.Configuration;
 global using IlWorkflow.API.Middleware;
 global using IlWorkflow.Application.Workflows;
+global using IlWorkflow.Contracts.WorkflowConfigurations;
+global using IlWorkflow.Contracts.WorkflowAttributes;
+global using IlWorkflow.Contracts.Tasks;

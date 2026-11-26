@@ -5,11 +5,12 @@ Open `ilworkflow.slnx` in Visual Studio. Set **ilworkflow.API** as the startup p
 | Project | Responsibility |
 |---|---|
 | ilworkflow.API | Program.cs, service registration, controllers, middleware, Swagger and settings |
-| ilworkflow.Application | Application contracts, FluentValidation, task validation and assignment policies |
+| ilworkflow.Application | Ports (service interfaces), FluentValidation, task validation and assignment policies |
+| ilworkflow.Contracts | HTTP request and response models, one folder per module: `WorkflowConfigurations`, `WorkflowAttributes`, `Tasks` |
 | ilworkflow.Domain | Configuration entity, enums, value records and exact attribute comparisons |
 | ilworkflow.Infrastructure | PostgreSQL/EF, Elsa workflows/stores and identity adapters |
 
-Application depends on Domain. Infrastructure depends on Application/Domain. API composes them. Domain and Application have no Elsa or EF Core dependencies. See [architecture notes](docs/ARCHITECTURE.md) and [developer guide](docs/DEVELOPER-GUIDE.md).
+Contracts depends only on Domain value types. Application depends on Domain/Contracts. Infrastructure depends on Application/Contracts/Domain. API composes them. Add a new endpoint's request/response records to the matching Contracts module folder, not to a controller. Domain and Application have no Elsa or EF Core dependencies. See [architecture notes](docs/ARCHITECTURE.md) and [developer guide](docs/DEVELOPER-GUIDE.md).
 
 ## Start
 

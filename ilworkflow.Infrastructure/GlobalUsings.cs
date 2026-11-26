@@ -8,3 +8,6 @@ global using Microsoft.Extensions.DependencyInjection;
 global using Microsoft.AspNetCore.Http;
 global using Microsoft.Extensions.Logging;
 global using IlWorkflow.Application.Workflows;
+global using IlWorkflow.Contracts.WorkflowConfigurations;
+global using IlWorkflow.Contracts.WorkflowAttributes;
+global using IlWorkflow.Contracts.Tasks;

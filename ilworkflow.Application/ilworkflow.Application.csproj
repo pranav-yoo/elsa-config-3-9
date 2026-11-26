@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../ilworkflow.Domain/ilworkflow.Domain.csproj" />
+    <ProjectReference Include="../ilworkflow.Contracts/ilworkflow.Contracts.csproj" />
     <PackageReference Include="FluentValidation" Version="12.1.1" />
   </ItemGroup>
 </Project>
