@@ -19,15 +19,15 @@ public sealed class TasksController(TaskService tasks) : ControllerBase
     public async Task<IActionResult> List([FromQuery] string scope = "assigned", [FromQuery] string? status = null,
         [FromQuery(Name = "workflow_instance_id")] string? workflowInstanceId = null, [FromQuery] string? cursor = null, [FromQuery] int limit = 50,
         [FromQuery(Name = "include_total_count")] bool includeTotalCount = false, CancellationToken ct = default) =>
-        Ok(await tasks.ListAsync(User, scope, status, workflowInstanceId, cursor, limit, includeTotalCount, ct));
+        ApiResultHelper.Ok(await tasks.ListAsync(User, scope, status, workflowInstanceId, cursor, limit, includeTotalCount, ct));
 
     /// <summary>Task detail, including its actions (buttons) and allowedActions for the caller.</summary>
     [HttpGet("{taskId}")]
-    public async Task<IActionResult> Get(string taskId, CancellationToken ct) => Ok(await tasks.GetAsync(User, taskId, ct));
+    public async Task<IActionResult> Get(string taskId, CancellationToken ct) => ApiResultHelper.Ok(await tasks.GetAsync(User, taskId, ct));
 
     [HttpGet("{taskId}/events")]
     public async Task<IActionResult> Events(string taskId, [FromQuery] string? cursor = null, [FromQuery] int limit = 50, CancellationToken ct = default) =>
-        Ok(await tasks.EventsAsync(User, taskId, cursor, limit, ct));
+        ApiResultHelper.Ok(await tasks.EventsAsync(User, taskId, cursor, limit, ct));
 
     [HttpPost("{taskId}/claim")]
     public async Task<IActionResult> Claim(string taskId, [FromBody] TaskCommandRequest? request, CancellationToken ct) =>
@@ -47,5 +47,7 @@ public sealed class TasksController(TaskService tasks) : ControllerBase
     public async Task<IActionResult> Complete(string taskId, [FromBody] CompleteTaskRequest request, CancellationToken ct) =>
         Send(await tasks.CompleteAsync(User, taskId, request, ct));
 
-    private IActionResult Send(TaskCommandResult result) => result.Accepted ? Accepted(result.Body) : Conflict(result.Body);
+    private ObjectResult Send(TaskCommandResult result) => result.Accepted
+        ? ApiResultHelper.Accepted(result.Body, "Accepted. The next task may take a moment to appear.")
+        : ApiResultHelper.Conflict(result.Body, "Conflict. Reload the task and retry.");
 }

@@ -67,7 +67,7 @@ Review tasks expose the stage's `actions` (`APPROVE`, `REJECT` and any custom ke
 ### Response format (/api/*)
 
 All application endpoints (`/api/tasks`, `/api/workflow-configurations`) return
-`{ "trace_id": "...", "messages": ["..."], "data": { ... } }`, for success and errors (errors put `code` and, for validation, `errors[]` in `data`).
+`{ "trace_id": "...", "status_code": 200, "messages": ["..."], "data": { ... } }` (`Result<T>` in `ilworkflow.Contracts/SharedContracts`, built by `ApiResultHelper` in `ilworkflow.API/Common`), for success and errors (errors put `code` and, for validation, `errors[]` in `data`).
 Elsa's native `/elsa/api/*` endpoints keep Elsa's format.
 All `/api/*` property and query names are snake_case (`definition_id`, `start_stage`, `stage_key`, `or_group`, `require_reason`, `expected_revision`, `workflow_instance_id`, …). Ticket attribute names (e.g. `claimAmount`) and enum values (`Stage`, `Bucket`, `APPROVE`) are unchanged.
 

@@ -101,7 +101,7 @@ public static class WorkflowServiceRegistration
         services.AddControllers(options =>
         {
             options.SuppressImplicitRequiredAttributeForNonNullableReferenceTypes = true;
-            // Company envelope { trace_id, messages, data } for this application's /api/* endpoints.
+            // Model-binding errors on /api/* use the same Result<T> body as controllers.
             options.Filters.Add<IlWorkflow.API.Middleware.ApiResponseFilter>();
         }).AddJsonOptions(options =>
         {

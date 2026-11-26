@@ -3,6 +3,8 @@ global using IlWorkflow.Application.Configuration;
 global using IlWorkflow.Infrastructure.Authorization;
 global using IlWorkflow.Infrastructure.Configuration;
 global using IlWorkflow.API.Middleware;
+global using IlWorkflow.API.Common;
+global using IlWorkflow.Contracts.SharedContracts;
 global using IlWorkflow.Application.Workflows;
 global using IlWorkflow.Contracts.WorkflowConfigurations.Requests;
 global using IlWorkflow.Contracts.WorkflowConfigurations.Responses;

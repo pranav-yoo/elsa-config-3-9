@@ -50,7 +50,7 @@ app.UseExceptionHandler(errors => errors.Run(async context =>
     context.Response.Headers["X-Trace-Id"] = context.TraceIdentifier;
     const string message = "An unexpected error occurred. Check server logs using the trace ID.";
     if (IlWorkflow.API.Middleware.ApiResponse.Applies(context))
-        await context.Response.WriteAsJsonAsync(IlWorkflow.API.Middleware.ApiResponse.Envelope(context, new { code = "internal_error" }, [message]));
+        await IlWorkflow.API.Common.ApiResultHelper.WriteAsync(context, IlWorkflow.API.Common.ApiResultHelper.Error(500, "internal_error", message));
     else
         await context.Response.WriteAsJsonAsync(new { Code = "internal_error", Message = message, TraceId = context.TraceIdentifier });
 }));
