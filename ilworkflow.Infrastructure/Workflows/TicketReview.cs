@@ -9,7 +9,6 @@ using Elsa.Workflows.Attributes;
 using Elsa.Workflows.Activities.Flowchart.Attributes;
 using Elsa.Workflows.Models;
 using FluentValidation;
-using IlWorkflow.Infrastructure.Configuration;
 using UserTask = Elsa.UserTasks.Activities.UserTask;
 
 namespace IlWorkflow.Api.Workflows;

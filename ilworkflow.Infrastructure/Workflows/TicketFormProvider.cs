@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Elsa.UserTasks.Contracts;
 using Elsa.UserTasks.Models;
-using FluentValidation;
 using IlWorkflow.Infrastructure.Configuration;
 
 namespace IlWorkflow.Api.Workflows;

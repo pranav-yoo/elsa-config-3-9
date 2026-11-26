@@ -68,7 +68,7 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
         var definition = await definitions.FindAsync(new WorkflowDefinitionFilter { Id = row.DefinitionVersionId }, ct) ?? throw new ApiException(409, "Elsa draft is missing.");
         if (definition.IsPublished) throw new ApiException(409, "Elsa version is already published.");
         row.Revision++;
-        return (row, definition, await BuildSetupAsync(row.DefinitionId, input, ct));
+        return (row, definition, await BuildSetupAsync(input, ct));
     }
 
     /// <summary>Create a definition (generated or caller-chosen ID) or the next version of an existing one.</summary>
@@ -88,14 +88,14 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
                 if (!await db.WorkflowConfigurations.AnyAsync(x => x.TenantId == "" && x.DefinitionId == definitionId, ct))
                     throw new ApiException(409, "This definition exists in Elsa but was not created through workflow configurations.");
                 // Validate before Elsa creates the draft so a rejected request cannot leave an orphan version behind.
-                var nextSetup = await BuildSetupAsync(definitionId, input, ct);
+                var nextSetup = await BuildSetupAsync(input, ct);
                 definition = await publisher.GetDraftAsync(definitionId, VersionOptions.Published, ct) ?? throw new ApiException(409, "Published definition is missing.");
                 return (NewRow(definition), definition, nextSetup);
             }
         }
         definition = await publisher.NewAsync(cancellationToken: ct);
         if (definitionId is not null) definition.DefinitionId = definitionId;
-        return (NewRow(definition), definition, await BuildSetupAsync(definition.DefinitionId, input, ct));
+        return (NewRow(definition), definition, await BuildSetupAsync(input, ct));
     }
 
     private WorkflowConfiguration NewRow(WorkflowDefinition definition)
@@ -105,7 +105,7 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
         return row;
     }
 
-    private async Task<WorkflowSetup> BuildSetupAsync(string definitionId, WorkflowSetupRequest input, CancellationToken ct)
+    private async Task<WorkflowSetup> BuildSetupAsync(WorkflowSetupRequest input, CancellationToken ct)
     {
         var setup = new WorkflowSetup(input.Name, [], input.StartStage, input.Stages, input.Supervisors);
         await validator.ValidateAndThrowAsync(setup, ct);

@@ -3,7 +3,6 @@ using Elsa.UserTasks.Contracts;
 using Elsa.UserTasks.Models;
 using Elsa.Workflows.Management;
 using Elsa.Workflows.Management.Filters;
-using IlWorkflow.Infrastructure.Configuration;
 
 namespace IlWorkflow.Infrastructure.Authorization;
 
