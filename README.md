@@ -6,7 +6,7 @@ Open `ilworkflow.slnx` in Visual Studio. Set **ilworkflow.API** as the startup p
 |---|---|
 | ilworkflow.API | Program.cs, service registration, controllers, middleware, Swagger and settings |
 | ilworkflow.Application | Ports (service interfaces), FluentValidation, task validation and assignment policies |
-| ilworkflow.Contracts | HTTP request and response models, one folder per module: `WorkflowConfigurations`, `WorkflowAttributes`, `Tasks` |
+| ilworkflow.Contracts | HTTP request and response models, one folder per module (`WorkflowConfigurations`, `WorkflowAttributes`, `Tasks`), each split into `Requests/` and `Responses/` |
 | ilworkflow.Domain | Configuration entity, enums, value records and exact attribute comparisons |
 | ilworkflow.Infrastructure | PostgreSQL/EF, Elsa workflows/stores and identity adapters |
 

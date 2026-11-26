@@ -1,4 +1,4 @@
-namespace IlWorkflow.Contracts.WorkflowAttributes;
+namespace IlWorkflow.Contracts.WorkflowAttributes.Responses;
 
 /// <summary>One catalog field as returned by the API. Mirrors the stored field without exposing the persistence entity.</summary>
 public sealed record WorkflowAttributeResponse(

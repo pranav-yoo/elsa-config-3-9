@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace IlWorkflow.Contracts.WorkflowConfigurations;
+namespace IlWorkflow.Contracts.WorkflowConfigurations.Responses;
 
 /// <summary>Public shape of one configuration version. Revision is an internal counter that grows on every save and publish.</summary>
 public sealed record WorkflowConfigurationResponse(
