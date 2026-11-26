@@ -45,7 +45,7 @@ Content-Type: application/json
 
 
 ### Create configuration + native Elsa draft
-# No workflow_version_id, so this creates the definition and its first version. Omit workflow_definition_id too to get a generated one. Conditions are ordered; the first match wins. The API maps claimAmount from the catalog.
+# No workflow_version, so this creates the definition and its first version. Omit workflow_definition_id too to get a generated one. Conditions are ordered; the first match wins. The API maps claimAmount from the catalog.
 # @name createConfiguration
 POST {{baseUrl}}/api/workflow-configurations
 Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
@@ -142,12 +142,12 @@ Content-Type: application/json
 
 ### Read draft
 # @name readConfiguration
-GET {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.data.workflow_definition_id}}/versions/{{createConfiguration.response.body.$.data.workflow_version_id}}
+GET {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.data.workflow_definition_id}}/versions/{{createConfiguration.response.body.$.data.workflow_version}}
 Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
 
 
 ### Update same draft using POST
-# Same endpoint as create. Pass BOTH ids to update that draft; the response revision grows on every save and is never sent. An unknown version id returns 404; editing a published version returns 409. Object references are intentionally unquoted JSON.
+# Same endpoint as create. Pass BOTH workflow_definition_id and workflow_version to update that draft; the response revision grows on every save and is never sent. An unknown version number returns 404; editing a published version returns 409. Object references are intentionally unquoted JSON.
 # @name updateConfiguration
 POST {{baseUrl}}/api/workflow-configurations
 Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
@@ -155,7 +155,7 @@ Content-Type: application/json
 
 {
   "workflow_definition_id": "{{readConfiguration.response.body.$.data.workflow_definition_id}}",
-  "workflow_version_id": "{{readConfiguration.response.body.$.data.workflow_version_id}}",
+  "workflow_version": {{readConfiguration.response.body.$.data.workflow_version}},
   "configuration": {
     "name": "{{readConfiguration.response.body.$.data.configuration.name}}",
     "start_stage": "{{readConfiguration.response.body.$.data.configuration.start_stage}}",
@@ -167,20 +167,20 @@ Content-Type: application/json
 ### Validate without publishing
 # 200 valid=true; FluentValidation failures return 400 with field/message errors.
 # @name validateConfiguration
-POST {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.data.workflow_definition_id}}/versions/{{createConfiguration.response.body.$.data.workflow_version_id}}/validate
+POST {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.data.workflow_definition_id}}/versions/{{createConfiguration.response.body.$.data.workflow_version}}/validate
 Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
 
 
 ### Publish exact Elsa version
 # Copy workflow_definition_id into Ticket-Workflow.http. This version is now immutable.
 # @name publishConfiguration
-POST {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.data.workflow_definition_id}}/versions/{{createConfiguration.response.body.$.data.workflow_version_id}}/publish
+POST {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.data.workflow_definition_id}}/versions/{{createConfiguration.response.body.$.data.workflow_version}}/publish
 Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
 
 # END MAIN SEQUENCE
 
 ### OPTIONAL next version
-# A definition id WITHOUT a version id creates the next version (returns a NEW workflow_version_id). Edit it by sending both ids. Only one open draft per definition; existing instances remain pinned to their original version.
+# A definition id WITHOUT workflow_version creates the next version (the response carries its new workflow_version number). Edit it by sending both. Only one open draft per definition; existing instances remain pinned to their original version.
 # @name nextVersion
 POST {{baseUrl}}/api/workflow-configurations
 Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}

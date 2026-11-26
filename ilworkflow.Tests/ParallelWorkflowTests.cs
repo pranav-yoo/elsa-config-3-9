@@ -230,7 +230,7 @@ public sealed class ParallelWorkflowTests(ITestOutputHelper output) : IDisposabl
             new JsonObject { ["workflowDefinitionId"] = definition, ["configuration"] = setup }, "admin", invalid is null ? 200 : 400);
         if (invalid is not null) return null;
         Assert.Equal(["claimAmount"], saved["configuration"]!["attributes"]!.AsArray().Select(f => (string)f!["key"]!).ToArray());
-        await api.PostAsync($"/api/workflow-configurations/{saved["workflowDefinitionId"]}/versions/{saved["workflowVersionId"]}/publish", null);
+        await api.PostAsync($"/api/workflow-configurations/{saved["workflowDefinitionId"]}/versions/{saved["workflowVersion"]}/publish", null);
         return definition;
     }
 

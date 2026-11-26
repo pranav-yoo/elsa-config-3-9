@@ -65,9 +65,9 @@ public sealed class AttributeCatalogTests(ITestOutputHelper output)
         // Inline attributes are ignored; the catalog is authoritative.
         setup["attributes"] = Node(new[] { new { key = "injected", type = "String", required = true } });
         var updated = await api.PostAsync("/api/workflow-configurations",
-            new JsonObject { ["workflowDefinitionId"] = definition, ["workflowVersionId"] = config["workflowVersionId"]!.DeepClone(), ["configuration"] = setup.DeepClone() });
+            new JsonObject { ["workflowDefinitionId"] = definition, ["workflowVersion"] = config["workflowVersion"]!.DeepClone(), ["configuration"] = setup.DeepClone() });
         Assert.Equal(["claimAmount", "department"], Keys(updated));
-        var versionId = config["workflowVersionId"]!.ToString();
+        var versionId = (int)config["workflowVersion"]!;
         var published = await api.PostAsync($"/api/workflow-configurations/{definition}/versions/{versionId}/publish", null);
 
         foreach (var attributes in new object[] { new { claimAmount = 6000 }, new { firstName = "John", claimAmount = 6000, department = "Finance" } })
@@ -76,15 +76,15 @@ public sealed class AttributeCatalogTests(ITestOutputHelper output)
             new { input = new { attributes = new { claimAmount = 6000, department = "Finance" } } }))["workflowState"]!["id"]!;
         Assert.Equal(definition, (string)(await api.GetAsync("/elsa/api/workflow-instances/" + instance))["definitionId"]!);
 
-        // No version ID: the published definition gets its next version.
+        // No version: the published definition gets its next version.
         var nextDraft = await api.PostAsync("/api/workflow-configurations", new JsonObject { ["workflowDefinitionId"] = definition, ["configuration"] = setup.DeepClone() });
-        Assert.NotEqual(versionId, nextDraft["workflowVersionId"]!.ToString());
-        Assert.Equal((int)published["versionNumber"]! + 1, (int)nextDraft["versionNumber"]!);
+        Assert.NotEqual(versionId, (int)nextDraft["workflowVersion"]!);
+        Assert.Equal((int)published["workflowVersion"]! + 1, (int)nextDraft["workflowVersion"]!);
         Assert.Equal(["claimAmount", "department"], Keys(nextDraft));
         stage["approveRules"] = new JsonArray();
         stage["assignment"] = new JsonObject { ["policy"] = "Specific", ["members"] = assignment["members"]!.DeepClone(), ["userId"] = assignment["userId"]!.DeepClone() };
         var empty = await api.PostAsync("/api/workflow-configurations",
-            new JsonObject { ["workflowDefinitionId"] = definition, ["workflowVersionId"] = nextDraft["workflowVersionId"]!.DeepClone(), ["configuration"] = setup.DeepClone() });
+            new JsonObject { ["workflowDefinitionId"] = definition, ["workflowVersion"] = nextDraft["workflowVersion"]!.DeepClone(), ["configuration"] = setup.DeepClone() });
         Assert.Empty(empty["configuration"]!["attributes"]!.AsArray());
         Assert.Equal(2, (await api.GetAsync($"/api/workflow-configurations/{definition}/versions/{versionId}"))["configuration"]!["attributes"]!.AsArray().Count);
 

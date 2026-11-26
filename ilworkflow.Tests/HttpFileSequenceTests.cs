@@ -50,15 +50,15 @@ public sealed class HttpFileSequenceTests(ITestOutputHelper output) : IDisposabl
         Assert.NotEqual((string)first["items"]![0]!["id"]!, (string)second["items"]![0]!["id"]!);
 
         var published = responses["observerPublished"]!["data"]!; // /api responses use the { trace_id, messages, data } envelope
-        var current = await api.GetAsync($"/api/workflow-configurations/{published["workflow_definition_id"]}/versions/{published["workflow_version_id"]}");
+        var current = await api.GetAsync($"/api/workflow-configurations/{published["workflow_definition_id"]}/versions/{published["workflow_version"]}");
         var setup = current["configuration"]!.AsObject();
         setup.Remove("attributes");
         setup["stages"]![0]!.AsObject().Remove("viewableByStages");
-        // No version ID: the published definition gets its next version.
+        // No version: the published definition gets its next version.
         var draft = await api.PostAsync("/api/workflow-configurations",
             new JsonObject { ["workflowDefinitionId"] = current["workflowDefinitionId"]!.DeepClone(), ["configuration"] = setup.DeepClone() });
-        Assert.NotEqual(current["workflowVersionId"]!.ToString(), draft["workflowVersionId"]!.ToString());
-        await api.PostAsync($"/api/workflow-configurations/{draft["workflowDefinitionId"]}/versions/{draft["workflowVersionId"]}/publish", null);
+        Assert.Equal((int)current["workflowVersion"]! + 1, (int)draft["workflowVersion"]!);
+        await api.PostAsync($"/api/workflow-configurations/{draft["workflowDefinitionId"]}/versions/{draft["workflowVersion"]}/publish", null);
         var created = (string)(await api.PostAsync(execute, payload))["workflowState"]!["id"]!;
         Assert.Single((await api.GetAsync(observedPath + "&workflowInstanceId=" + existing, Actor("dan")))["items"]!.AsArray());
         Assert.Empty((await api.GetAsync(observedPath + "&workflowInstanceId=" + created, Actor("dan")))["items"]!.AsArray());

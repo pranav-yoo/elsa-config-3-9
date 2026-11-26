@@ -26,10 +26,10 @@ public interface IApproverDirectory
 }
 public interface IWorkflowConfigurationService
 {
-    Task<WorkflowConfiguration> GetAsync(string workflowDefinitionId, string workflowVersionId, CancellationToken ct);
+    Task<WorkflowConfiguration> GetAsync(string workflowDefinitionId, int workflowVersion, CancellationToken ct);
     Task<WorkflowConfiguration> SaveAsync(SaveConfigurationRequest request, CancellationToken ct);
-    Task ValidateAsync(string workflowDefinitionId, string workflowVersionId, CancellationToken ct);
-    Task<WorkflowConfiguration> PublishAsync(string workflowDefinitionId, string workflowVersionId, CancellationToken ct);
+    Task ValidateAsync(string workflowDefinitionId, int workflowVersion, CancellationToken ct);
+    Task<WorkflowConfiguration> PublishAsync(string workflowDefinitionId, int workflowVersion, CancellationToken ct);
 }
 
 public interface IWorkflowAttributeService

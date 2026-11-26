@@ -91,7 +91,7 @@ Content-Type: application/json
 }
 
 ### 3. Publish
-POST {{baseUrl}}/api/workflow-configurations/{{parallelDraft.response.body.$.data.workflow_definition_id}}/versions/{{parallelDraft.response.body.$.data.workflow_version_id}}/publish
+POST {{baseUrl}}/api/workflow-configurations/{{parallelDraft.response.body.$.data.workflow_definition_id}}/versions/{{parallelDraft.response.body.$.data.workflow_version}}/publish
 Authorization: Bearer {{parallelAdmin.response.body.$.accessToken}}
 
 ### 4. Start a fresh instance for each scenario

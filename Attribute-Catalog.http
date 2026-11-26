@@ -1,6 +1,6 @@
 # Configure fields BEFORE the workflow. Run one request at a time.
-# Sending an existing workflow_definition_id WITHOUT workflow_version_id creates its next version (409 while a draft is open).
-# To edit a draft, POST both workflow_definition_id and workflow_version_id. Draft saves resolve current conditional fields
+# Sending an existing workflow_definition_id WITHOUT workflow_version creates its next version (409 while a draft is open).
+# To edit a draft, POST both workflow_definition_id and workflow_version. Draft saves resolve current conditional fields
 # for the same workflow_definition_id.
 # Published versions and their instances retain their saved snapshot.
 @baseUrl = http://localhost:5000
@@ -68,7 +68,7 @@ Content-Type: application/json
 
 ### Publish the saved attribute snapshot
 # @name catalogPublished
-POST {{baseUrl}}/api/workflow-configurations/{{catalogDraft.response.body.$.data.workflow_definition_id}}/versions/{{catalogDraft.response.body.$.data.workflow_version_id}}/publish
+POST {{baseUrl}}/api/workflow-configurations/{{catalogDraft.response.body.$.data.workflow_definition_id}}/versions/{{catalogDraft.response.body.$.data.workflow_version}}/publish
 Authorization: Bearer {{catalogAdmin.response.body.$.accessToken}}
 
 ### Internal user starts the instance with the mapped conditional attributes

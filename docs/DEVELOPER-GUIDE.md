@@ -63,7 +63,7 @@ Approver token
 - Task `id`: one stage visit's human task. Returning to A creates another task, not a reset of the old task.
 - `operationId`: one native task command UUID. Reuse the original command body for a retry.
 - `expectedRevision`: the native task revision for task commands. Configuration `revision` is a separate, internal counter returned in responses; clients never send it.
-- `workflow_definition_id` / `workflow_version_id`: the configuration family and one of its versions (Elsa's version ID). Updates need both; omitting the version ID creates a new version.
+- `workflow_definition_id` / `workflow_version`: the configuration family and one of its versions (the Elsa version number, not its row ID). Updates need both; omitting the version creates a new version.
 
 ## Configuration and publishing
 
@@ -75,7 +75,7 @@ Elsa uses separate EF contexts, so this is **not** a single transaction spanning
 
 Elsa normalizes serialized drafts. Hash the representation read back from its native store, not the pre-save JSON text. The hash is an integrity check against accidental raw edits, not an authorization secret. Trusted administrators/SDK callers must still follow the configuration boundary.
 
-`Frozen` remains true after a newer version retracts this version. Old instances may still reference it. Saving a definition ID without a version ID uses Elsa's draft creation from the published version and builds the new draft from the configuration in the request, so a new version never depends on an older snapshot.
+`Frozen` remains true after a newer version retracts this version. Old instances may still reference it. Saving a definition ID without a version uses Elsa's draft creation from the published version and builds the new draft from the configuration in the request, so a new version never depends on an older snapshot.
 
 ## Why a generated graph plus a typed review activity?
 

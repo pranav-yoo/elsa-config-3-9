@@ -41,23 +41,23 @@ Run requests one at a time; use named responses within a file and copy marked ID
 
 `POST /api/workflow-attributes` creates a master field (missing/zero `id`) or updates one (positive `id`). Each row belongs to a `definitionId` and has `status: Active` or `Inactive`. `GET /api/workflow-attributes?definitionId=expense-claim-v1` lists that family's master records.
 
-Pass `workflow_definition_id` in `POST /api/workflow-configurations` to create Elsa's workflow with that exact ID. Supply the attribute key in a rule's `conditions[].attribute` for an approval route or conditional assignment. The server maps those keys to active rows from `Application.WorkflowAttributes` under the same definition ID. Missing, inactive or other-definition references return 400. Each mapped field is mandatory. Sending an existing definition ID without `workflow_version_id` creates its next version, and returns 409 while another draft of that definition is still open.
+Pass `workflow_definition_id` in `POST /api/workflow-configurations` to create Elsa's workflow with that exact ID. Supply the attribute key in a rule's `conditions[].attribute` for an approval route or conditional assignment. The server maps those keys to active rows from `Application.WorkflowAttributes` under the same definition ID. Missing, inactive or other-definition references return 400. Each mapped field is mandatory. Sending an existing definition ID without `workflow_version` creates its next version, and returns 409 while another draft of that definition is still open.
 
 The configuration request contains the name, start stage and stages. The response includes the resolved attribute snapshot. Draft saves and new-version creation resolve the current conditional fields. Publishing freezes that snapshot for running instances. Workflows without conditions have an empty attribute snapshot. Send the mapped values in `input.attributes` at execution and in `data.attributes` when resubmitting corrections. Your application can store its section and subsection data separately.
 
 The attribute table and catalog-source flag are installed by migration `202611020001_WorkflowAttributes` on persistent startup. Run `dotnet test ilworkflow.Tests --filter AttributeCatalogTests` to verify the named-definition flow and native approval.
 
-`POST /api/workflow-configurations` is the only write endpoint. Configurations are addressed by `workflow_definition_id` and `workflow_version_id` (Elsa's version ID):
+`POST /api/workflow-configurations` is the only write endpoint. Configurations are addressed by `workflow_definition_id` and `workflow_version` (Elsa's integer version number, 1, 2, 3, ...):
 
 | Body | Result |
 |---|---|
 | `configuration` only | New definition with a generated `workflow_definition_id` and its first version. |
 | `workflow_definition_id` + `configuration` | That definition if it does not exist yet, otherwise its **next version**. Returns 409 while a draft of it is still open. |
-| `workflow_definition_id` + `workflow_version_id` + `configuration` | Updates that draft version. Unknown version returns 404; a published version returns 409. |
+| `workflow_definition_id` + `workflow_version` + `configuration` | Updates that draft version. Unknown version returns 404; a published version returns 409. |
 
-`workflow_version_id` without `workflow_definition_id` returns 400. The retired request fields `definition_id`, `id` and `expected_revision` also return 400 instead of being ignored. Read, validate and publish use `/api/workflow-configurations/{workflow_definition_id}/versions/{workflow_version_id}` (`GET`, `POST .../validate`, `POST .../publish`). There is no `next-draft` route.
+`workflow_version` without `workflow_definition_id` returns 400. The retired request fields `definition_id`, `id` and `expected_revision` also return 400 instead of being ignored. Read, validate and publish use `/api/workflow-configurations/{workflow_definition_id}/versions/{workflow_version}` (`GET`, `POST .../validate`, `POST .../publish`). There is no `next-draft` route.
 
-Responses return `workflow_definition_id`, `workflow_version_id`, `version_number`, `revision`, `is_published` and `configuration`. `revision` is an internal counter: it starts at 1 for each version, grows on every save and publish, and is never sent by clients. Published snapshots are immutable. Execution, tasks, instances and history use native Elsa APIs. No custom PUT or /api/tickets endpoint exists.
+Responses return `workflow_definition_id`, `workflow_version`, `revision`, `is_published` and `configuration`. `revision` is an internal counter: it starts at 1 for each version, grows on every save and publish, and is never sent by clients. Published snapshots are immutable. Execution, tasks, instances and history use native Elsa APIs. No custom PUT or /api/tickets endpoint exists.
 
 Above 5000, approval passes through C; 5000 and below bypass C. Rejection: A returns to correction/A; B returns to A; C ends Rejected; D returns to correction/D. Resubmission uses the same instance and preserves attribute revisions. Read workflowState.output.ticketOutcome for Approved/Rejected; technical Finished is not a business outcome. Poll after 202 completion. Reuse the original operationId/body/revision when retrying one command.
 

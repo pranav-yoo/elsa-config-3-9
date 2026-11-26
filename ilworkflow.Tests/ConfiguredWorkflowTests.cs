@@ -38,8 +38,8 @@ public sealed class ConfiguredWorkflowTests(ITestOutputHelper output) : IDisposa
         var saved = JsonNode.Parse(await File.ReadAllTextAsync(StatePath, TestContext.Current.CancellationToken))!;
         var savedIds = saved["userIds"]!.AsObject().ToDictionary(x => x.Key, x => (string)x.Value!);
         Assert.True(savedIds.OrderBy(x => x.Key).SequenceEqual(ids.OrderBy(x => x.Key)), "Native user IDs did not survive restart");
-        var config = await api.GetAsync($"/api/workflow-configurations/{saved["workflowDefinitionId"]}/versions/{saved["workflowVersionId"]}");
-        Assert.Equal(saved["workflowVersionId"]!.ToString(), config["workflowVersionId"]!.ToString());
+        var config = await api.GetAsync($"/api/workflow-configurations/{saved["workflowDefinitionId"]}/versions/{saved["workflowVersion"]}");
+        Assert.Equal(saved["workflowVersion"]!.ToString(), config["workflowVersion"]!.ToString());
         Assert.True((bool)config["isPublished"]!);
         var pending = (string)saved["pendingInstance"]!;
         Assert.Equal((string)saved["pendingTask"]!, (string)(await TaskAsync(pending, "alice"))["id"]!);
@@ -58,11 +58,11 @@ public sealed class ConfiguredWorkflowTests(ITestOutputHelper output) : IDisposa
 
         var config = await CreateAsync();
         var firstRevision = (long)config["revision"]!;
-        config = await SaveAsync(config["workflowDefinitionId"]!, config["workflowVersionId"], config["configuration"]!);
+        config = await SaveAsync(config["workflowDefinitionId"]!, config["workflowVersion"], config["configuration"]!);
         Assert.Equal(firstRevision + 1, (long)config["revision"]!);
         await SaveAsync(config["workflowDefinitionId"]!, JsonValue.Create("missing-version"), config["configuration"]!, 404);
         config = await PublishAsync(config);
-        await SaveAsync(config["workflowDefinitionId"]!, config["workflowVersionId"], config["configuration"]!, 409);
+        await SaveAsync(config["workflowDefinitionId"]!, config["workflowVersion"], config["configuration"]!, 409);
         output.WriteLine("PASS POST create/update by version, revision appends, unknown version and immutable published configuration");
 
         foreach (var amount in new[] { 4000, 5000, 6000 })
@@ -198,19 +198,18 @@ public sealed class ConfiguredWorkflowTests(ITestOutputHelper output) : IDisposa
 
         var pending = await StartAsync(config);
         var pendingTask = (string)(await TaskAsync(pending, "alice"))["id"]!;
-        // No version ID: the same definition gets its next version.
+        // No version: the same definition gets its next version.
         var nextConfig = await SaveAsync(config["workflowDefinitionId"]!, null, config["configuration"]!);
         Assert.Equal(config["workflowDefinitionId"]!.ToString(), nextConfig["workflowDefinitionId"]!.ToString());
-        Assert.NotEqual(config["workflowVersionId"]!.ToString(), nextConfig["workflowVersionId"]!.ToString());
-        Assert.Equal((int)config["versionNumber"]! + 1, (int)nextConfig["versionNumber"]!);
+                Assert.Equal((int)config["workflowVersion"]! + 1, (int)nextConfig["workflowVersion"]!);
         nextConfig["configuration"]!["name"] = "Expense Claim v2";
-        nextConfig = await SaveAsync(nextConfig["workflowDefinitionId"]!, nextConfig["workflowVersionId"], nextConfig["configuration"]!);
+        nextConfig = await SaveAsync(nextConfig["workflowDefinitionId"]!, nextConfig["workflowVersion"], nextConfig["configuration"]!);
         await PublishAsync(nextConfig);
-        Assert.Equal(config["workflowVersionId"]!.ToString(), (await api.GetAsync("/elsa/api/workflow-instances/" + pending))["definitionVersionId"]!.ToString());
+        Assert.Equal((int)config["workflowVersion"]!, (int)(await api.GetAsync("/elsa/api/workflow-instances/" + pending))["version"]!);
         Directory.CreateDirectory(Path.GetDirectoryName(StatePath)!);
         var state = new JsonObject
         {
-            ["workflowDefinitionId"] = config["workflowDefinitionId"]!.DeepClone(), ["workflowVersionId"] = config["workflowVersionId"]!.DeepClone(),
+            ["workflowDefinitionId"] = config["workflowDefinitionId"]!.DeepClone(), ["workflowVersion"] = config["workflowVersion"]!.DeepClone(),
             ["pendingInstance"] = pending, ["pendingTask"] = pendingTask, ["correctedInstance"] = corrected, ["userIds"] = Node(ids),
         };
         await File.WriteAllTextAsync(StatePath, state.ToJsonString(), TestContext.Current.CancellationToken);
@@ -301,16 +300,16 @@ public sealed class ConfiguredWorkflowTests(ITestOutputHelper output) : IDisposa
             new JsonObject { ["workflowDefinitionId"] = definition, ["configuration"] = setup }, "configurator", expected)).Body!;
     }
 
-    /// <summary>Both IDs update that draft version. Without a version ID the definition gets its next version.</summary>
+    /// <summary>Definition ID + version number update that draft version. Without a version the definition gets its next version.</summary>
     private Task<JsonNode> SaveAsync(JsonNode definitionId, JsonNode? versionId, JsonNode configuration, params int[] expected)
     {
         var body = new JsonObject { ["workflowDefinitionId"] = definitionId.DeepClone(), ["configuration"] = configuration.DeepClone() };
-        if (versionId is not null) body["workflowVersionId"] = versionId.DeepClone();
+        if (versionId is not null) body["workflowVersion"] = versionId.DeepClone();
         return api.PostAsync("/api/workflow-configurations", body, "configurator", expected);
     }
 
     private Task<JsonNode> PublishAsync(JsonNode config)
-        => api.PostAsync($"/api/workflow-configurations/{config["workflowDefinitionId"]}/versions/{config["workflowVersionId"]}/publish", null, "configurator");
+        => api.PostAsync($"/api/workflow-configurations/{config["workflowDefinitionId"]}/versions/{config["workflowVersion"]}/publish", null, "configurator");
 
     private async Task<string> StartAsync(JsonNode config, long amount = 6000)
     {
