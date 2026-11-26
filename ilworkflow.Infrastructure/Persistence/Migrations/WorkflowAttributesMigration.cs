@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
-namespace IlWorkflow.Infrastructure.Persistence;
+namespace IlWorkflow.Infrastructure.Persistence.Migrations;
 
 [DbContext(typeof(ApplicationDbContext))]
 [Migration("202611020001_WorkflowAttributes")]

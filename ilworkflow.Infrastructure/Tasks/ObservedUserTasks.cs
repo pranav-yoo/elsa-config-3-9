@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
 
-namespace IlWorkflow.Infrastructure.Persistence;
+namespace IlWorkflow.Infrastructure.Tasks;
 
 public sealed class ObservedUserTasks(Store<UserTasksElsaDbContext, UserTaskRecord> store, IUserTaskRepository tasks, IUserTaskAccessPolicy access)
 {

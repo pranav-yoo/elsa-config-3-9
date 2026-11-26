@@ -1,7 +1,6 @@
 global using IlWorkflow.Domain.Configuration;
 global using IlWorkflow.Application.Configuration;
 global using IlWorkflow.Infrastructure.Authorization;
-global using IlWorkflow.Infrastructure.Configuration;
 global using Microsoft.Extensions.Configuration;
 global using Microsoft.Extensions.DependencyInjection;
 global using Microsoft.AspNetCore.Http;

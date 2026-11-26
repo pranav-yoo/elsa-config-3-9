@@ -20,7 +20,9 @@ using Elsa.UserTasks.Activities;
 using Elsa.UserTasks.Services;
 using Elsa.UserTasks.Persistence.EFCore.Extensions;
 using Elsa.UserTasks.Persistence.EFCore.PostgreSql.Extensions;
-using IlWorkflow.Api.Tickets;
+using IlWorkflow.Infrastructure.Identity;
+using IlWorkflow.Infrastructure.Persistence.UserTasks;
+using IlWorkflow.Infrastructure.Tasks;
 using IlWorkflow.Infrastructure.Authentication;
 
 namespace IlWorkflow.API.Services;
@@ -84,7 +86,7 @@ public static class WorkflowServiceRegistration
             });
         services.AddHttpContextAccessor();
         services.AddUserTokenAuthentication(configuration);
-        services.AddScoped<IApproverDirectory, TicketIdentity>();
+        services.AddScoped<IApproverDirectory, ApproverDirectory>();
         if (!swaggerPreview)
         {
             services.AddSingleton<IUserTaskAccessPolicy, ObservedTaskAccess>();
@@ -115,10 +117,10 @@ public static class WorkflowServiceRegistration
         services.AddSingleton<WorkflowDefinitionBuilder>();
         services.AddScoped<AssignmentResolver>();
         services.AddScoped<WorkflowAccessService>();
-        services.AddScoped<IlWorkflow.Infrastructure.Tasks.TaskService>();
+        services.AddScoped<TaskService>();
         services.AddSingleton<IUserTaskFormProvider, TicketFormProvider>();
         services.AddAuthorization(options => options.AddPolicy("WorkflowConfigurator", policy =>
-            policy.RequireAuthenticatedUser().RequireAssertion(context => ConfigurationAccess.IsConfigurator(context.User))));
+            policy.RequireAuthenticatedUser().RequireAssertion(context => PermissionChecks.IsConfigurator(context.User))));
         return services;
     }
 }

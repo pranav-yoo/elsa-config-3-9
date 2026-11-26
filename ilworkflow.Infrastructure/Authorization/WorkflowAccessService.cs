@@ -3,12 +3,14 @@ using Elsa.UserTasks.Contracts;
 using Elsa.UserTasks.Models;
 using Elsa.Workflows.Management;
 using Elsa.Workflows.Management.Filters;
+using IlWorkflow.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 
 namespace IlWorkflow.Infrastructure.Authorization;
 
 /// <summary>Native instance permission is broad; this adds ownership/participation checks for ticket clients.</summary>
 public sealed class WorkflowAccessService(IWorkflowInstanceStore instances, IUserTaskRepository tasks,
-    IUserTaskIdentityResolver identities, IUserTaskAccessPolicy access, IlWorkflow.Infrastructure.Persistence.ApplicationDbContext db)
+    IUserTaskIdentityResolver identities, IUserTaskAccessPolicy access, ApplicationDbContext db)
 {
     public async Task<bool> CanReadInstanceAsync(string id, ClaimsPrincipal user, CancellationToken ct)
     {
@@ -16,12 +18,12 @@ public sealed class WorkflowAccessService(IWorkflowInstanceStore instances, IUse
         if (instance is null) return false;
         var tenant = user.FindFirstValue("tenant") ?? "";
         if ((instance.TenantId ?? "") != tenant) return false;
-        if (ConfigurationAccess.IsSupervisor(user)) return true;
+        if (PermissionChecks.IsSupervisor(user)) return true;
         var subject = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.FindFirstValue("sub");
         if (instance.WorkflowState.Output.TryGetValue("requesterId", out var requester) && requester?.ToString() == subject) return true;
         // Workflow supervisors listed in the configuration version this instance runs.
-        var configuration = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.SingleOrDefaultAsync(
-            db.WorkflowConfigurations.Where(x => x.DefinitionVersionId == instance.DefinitionVersionId).Select(x => x.ConfigurationJson), ct);
+        var configuration = await db.WorkflowConfigurations.Where(x => x.DefinitionVersionId == instance.DefinitionVersionId)
+            .Select(x => x.ConfigurationJson).SingleOrDefaultAsync(ct);
         if (configuration is not null && subject is not null
             && ConfigurationJson.Read<WorkflowSetup>(configuration).Supervisors?.Contains(subject) == true) return true;
         var actor = await identities.ResolveAsync(user, ct);

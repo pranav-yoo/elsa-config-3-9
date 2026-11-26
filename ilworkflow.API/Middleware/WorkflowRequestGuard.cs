@@ -10,6 +10,7 @@ using Elsa.Workflows.Management.Filters;
 using FluentValidation;
 using IlWorkflow.Infrastructure.Configuration;
 using IlWorkflow.Infrastructure.Persistence;
+using IlWorkflow.Infrastructure.Tasks;
 using IlWorkflow.Api.Workflows;
 using Microsoft.EntityFrameworkCore;
 
@@ -61,7 +62,7 @@ public sealed class WorkflowRequestGuard
             }
             if (http.User.Identity?.IsAuthenticated != true) throw new ApiException(401, "A valid bearer token is required.");
             if (!string.IsNullOrEmpty(http.User.FindFirstValue("tenant"))) throw new ApiException(403, "This version supports the default organization only.");
-            var supervisor = ConfigurationAccess.IsSupervisor(http.User);
+            var supervisor = PermissionChecks.IsSupervisor(http.User);
             // Two extra read scopes: observed (viewableByStages) and supervised (workflow supervisors).
             if (parts.Length == 1 && parts[0] == "user-tasks" && HttpMethods.IsGet(http.Request.Method)
                 && http.Request.Query["scope"].ToString().ToLowerInvariant() is "observed" or "supervised")
@@ -77,7 +78,7 @@ public sealed class WorkflowRequestGuard
             if (parts[0] == "workflow-definitions" && parts.Length == 3 && parts[2] == "execute")
             {
                 if (!HttpMethods.IsPost(http.Request.Method)) throw new ApiException(400, "Use POST execute with a JSON input object.");
-                if (!ConfigurationAccess.HasPermission(http.User, "workflows/definitions", "execute")) throw new ApiException(403, "Workflow execute permission is required.");
+                if (!PermissionChecks.HasPermission(http.User, "workflows/definitions", "execute")) throw new ApiException(403, "Workflow execute permission is required.");
                 var definition = await definitions.FindAsync(new WorkflowDefinitionFilter { DefinitionId = parts[1], VersionOptions = VersionOptions.Published }, http.RequestAborted);
                 if (definition is null) throw new ApiException(404, "Published definition not found.");
                 var row = await db.WorkflowConfigurations.AsNoTracking().SingleOrDefaultAsync(x => x.DefinitionVersionId == definition.Id, http.RequestAborted);

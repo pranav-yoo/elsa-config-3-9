@@ -10,54 +10,9 @@ using Elsa.Workflows.Activities.Flowchart.Attributes;
 using Elsa.Workflows.Models;
 using FluentValidation;
 using UserTask = Elsa.UserTasks.Activities.UserTask;
+using ConfigJson = IlWorkflow.Application.Configuration.ConfigurationJson;
 
 namespace IlWorkflow.Api.Workflows;
-
-/// <summary>State helpers operate on the persisted workflow output, not short-lived activity properties.</summary>
-public static class TicketState
-{
-    public static Dictionary<string, JsonElement> Attributes(WorkflowExecutionContext context) =>
-        ConfigurationJson.Read<Dictionary<string, JsonElement>>(ConfigurationJson.Write(context.Output["attributes"]));
-    public static string Requester(WorkflowExecutionContext context) => context.Output["requesterId"]?.ToString() ?? "";
-    public static ParticipantReference User(string id) => new("", "default", UserTaskParticipantType.User, id);
-    public static void SetAttributes(ActivityExecutionContext context, Dictionary<string, JsonElement> values, WorkflowSetup setup)
-    {
-        // Workflow output survives pruning of completed activity contexts. The flowchart variable is
-        // persisted alongside typed route results, recalculated whenever attributes change.
-        context.WorkflowExecutionContext.Output["attributes"] = values;
-        var routes = new Dictionary<string, bool>();
-        foreach (var stage in setup.Stages)
-            foreach (var action in stage.Actions ?? [])
-                for (var index = 0; index < (action.Rules?.Length ?? 0); index++)
-                    routes[StageAction.RouteKey(stage.Key, action.Key, index)] = AttributeRules.Matches(action.Rules![index].Conditions, values);
-        var snapshot = JsonSerializer.SerializeToNode(values)!;
-        snapshot["$routes"] = JsonSerializer.SerializeToNode(routes);
-        // Keep the original fields for existing persisted graphs. New graphs read only $routes;
-        // public attributes/task data stay free of this internal metadata.
-        context.ExpressionExecutionContext.SetVariable("attributesJson", snapshot.ToJsonString());
-    }
-}
-
-[Activity("Tickets", "Tickets", "Initializes a validated ticket snapshot.")]
-public sealed class InitializeTicket : Activity
-{
-    [Input] public Input<string> ConfigurationJson { get; set; } = null!;
-    protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
-    {
-        var setup = IlWorkflow.Application.Configuration.ConfigurationJson.Read<WorkflowSetup>(ConfigurationJson.Get(context));
-        var values = context.GetWorkflowInput<Dictionary<string, JsonElement>>("attributes");
-        await new TicketInputValidator(setup).ValidateAndThrowAsync(values, context.CancellationToken);
-        var requester = context.GetWorkflowInput<string>("requesterId");
-        if (string.IsNullOrWhiteSpace(requester)) throw new InvalidOperationException("Requester must be supplied by the authenticated execute guard.");
-        var output = context.WorkflowExecutionContext.Output;
-        output["requesterId"] = requester;
-        output["ticketOutcome"] = TicketOutcome.InReview.ToString();
-        output["attributeRevision"] = 1;
-        output["attributeHistory"] = JsonSerializer.SerializeToElement(new[] { new { revision = 1, attributes = values } });
-        TicketState.SetAttributes(context, values, setup);
-        await context.CompleteActivityAsync();
-    }
-}
 
 [Activity("Tickets", "Tickets", "Schedules one native approval or correction task.")]
 [FlowNode("Approve", "Reject", "Resubmit", "Custom")]
@@ -73,13 +28,13 @@ public sealed class TicketReview : Activity
     // Visits recorded before stage actions existed have no "stageKey" property: return null.
     private static StageDefinition? StageOf(ActivityExecutionContext context) =>
         context.GetProperty<string>("stageKey") is { } key && context.GetProperty<string>("schema") is { } schema
-            ? IlWorkflow.Application.Configuration.ConfigurationJson.Read<WorkflowSetup>(schema).Stages.FirstOrDefault(x => x.Key == key)
+            ? ConfigJson.Read<WorkflowSetup>(schema).Stages.FirstOrDefault(x => x.Key == key)
             : null;
     private static readonly UserTaskActionDefinition[] BuiltInActions =
         [new(TaskActionKeys.Approve, "Approve"), new(TaskActionKeys.Reject, "Reject")];
     private static UserTaskActionDefinition[] ActionsOf(ActivityExecutionContext context) =>
         StageOf(context)?.Actions?.Select(x => new UserTaskActionDefinition(x.Key, x.DisplayLabel)).ToArray() ?? BuiltInActions;
-    private static ResolvedAssignment Assignment(ExpressionExecutionContext context) => IlWorkflow.Application.Configuration.ConfigurationJson.Read<ResolvedAssignment>(Parent(context).GetProperty<string>("assignment")!);
+    private static ResolvedAssignment Assignment(ExpressionExecutionContext context) => ConfigJson.Read<ResolvedAssignment>(Parent(context).GetProperty<string>("assignment")!);
     public TicketReview()
     {
         Review = new UserTask
@@ -89,7 +44,7 @@ public sealed class TicketReview : Activity
             Summary = new(ctx => Assignment(ctx).Blocked ? "Assignment blocked. Supervisor reassignment required." : "Review this request."),
             TaskType = new(ctx => Parent(ctx).GetProperty<bool>("parallelBranch") ? ParallelTicketReview.TaskType : "configured-ticket"),
             Tags = new(ctx => Parent(ctx).GetProperty<string>("observerTags") is { } tags
-                ? IlWorkflow.Application.Configuration.ConfigurationJson.Read<string[]>(tags) : []),
+                ? ConfigJson.Read<string[]>(tags) : []),
             Reference = new(ctx => Parent(ctx).WorkflowExecutionContext.CorrelationId),
             Requester = new(ctx => TicketState.User(TicketState.Requester(Parent(ctx).WorkflowExecutionContext))),
             CandidateUsers = new(ctx => Assignment(ctx).Candidates.Select(TicketState.User).ToArray()),
@@ -110,7 +65,7 @@ public sealed class TicketReview : Activity
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
         var schema = ConfigurationJson.Get(context);
-        var setup = IlWorkflow.Application.Configuration.ConfigurationJson.Read<WorkflowSetup>(schema);
+        var setup = ConfigJson.Read<WorkflowSetup>(schema);
         var stage = setup.Stages.Single(x => x.Key == StageKey.Get(context));
         var correction = Correction.Get(context);
         var parallelBranch = ParallelBranch.Get(context);
@@ -121,7 +76,7 @@ public sealed class TicketReview : Activity
             : await context.GetRequiredService<AssignmentResolver>().ResolveAsync(stage.Assignment, TicketState.Attributes(context.WorkflowExecutionContext), context.CancellationToken);
         // Only this active activity's callback needs these properties. Final ticket data belongs in
         // workflow output instead; completed activity contexts may be removed by the runtime.
-        context.SetProperty("assignment", IlWorkflow.Application.Configuration.ConfigurationJson.Write(assignment));
+        context.SetProperty("assignment", ConfigJson.Write(assignment));
         context.SetProperty("schema", schema);
         context.SetProperty("stageKey", stage.Key);
         context.SetProperty("correction", correction);
@@ -142,7 +97,7 @@ public sealed class TicketReview : Activity
         foreach (var supervisor in setup.Supervisors ?? [])
             if (await users.HasRoleAsync(supervisor, WorkflowSetup.SupervisorRole, context.CancellationToken))
                 tags.Add(ObservedTaskAccess.SupervisorTagFor(TicketState.User(supervisor)));
-        if (tags.Count > 0) context.SetProperty("observerTags", IlWorkflow.Application.Configuration.ConfigurationJson.Write(tags));
+        if (tags.Count > 0) context.SetProperty("observerTags", ConfigJson.Write(tags));
         if (!parallelBranch)
         {
             context.WorkflowExecutionContext.Output["currentStage"] = stage.Key;
@@ -171,7 +126,7 @@ public sealed class TicketReview : Activity
         if (decision == TaskDecision.Resubmit)
         {
             var attributes = stimulus.CompletionData!.Value.GetProperty("attributes").Deserialize<Dictionary<string, JsonElement>>()!;
-            var schema = IlWorkflow.Application.Configuration.ConfigurationJson.Read<WorkflowSetup>(context.GetProperty<string>("schema")!);
+            var schema = ConfigJson.Read<WorkflowSetup>(context.GetProperty<string>("schema")!);
             await new TicketInputValidator(schema).ValidateAndThrowAsync(attributes, context.CancellationToken);
             var output = context.WorkflowExecutionContext.Output;
             var revision = int.Parse(output["attributeRevision"].ToString()!) + 1;
@@ -189,19 +144,5 @@ public sealed class TicketReview : Activity
             context.WorkflowExecutionContext.Output["lastDecision"] = outcome;
         // Persisted graphs use enum names for ports, independently of the public task action keys.
         await context.CompleteActivityWithOutcomesAsync(outcome);
-    }
-}
-
-[Activity("Tickets", "Tickets", "Records an explicit business result while Elsa owns technical status.")]
-public sealed class FinishTicket : Activity
-{
-    [Input] public Input<string> Outcome { get; set; } = null!;
-    protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
-    {
-        var outcome = Enum.Parse<TicketOutcome>(Outcome.Get(context));
-        if (outcome is not (TicketOutcome.Approved or TicketOutcome.Rejected)) throw new InvalidOperationException("A terminal outcome is required.");
-        context.WorkflowExecutionContext.Output["ticketOutcome"] = outcome.ToString();
-        context.WorkflowExecutionContext.Output["currentStage"] = null!;
-        await context.CompleteActivityAsync();
     }
 }

@@ -2,12 +2,8 @@ using System.Security.Claims;
 using Elsa.UserTasks.Contracts;
 using Elsa.UserTasks.Models;
 using IlWorkflow.Api.Workflows;
-using IlWorkflow.Infrastructure.Persistence;
 
 namespace IlWorkflow.Infrastructure.Tasks;
-
-/// <summary>Result of a task command: Accepted (HTTP 202) with the updated task, or a conflict (HTTP 409).</summary>
-public sealed record TaskCommandResult(bool Accepted, object Body);
 
 /// <summary>
 /// Application wrapper over Elsa's native user-task manager. Add company authentication/validation in front of
@@ -18,6 +14,7 @@ public sealed class TaskService(IUserTaskManager manager, IUserTaskIdentityResol
     IServiceProvider services)
 {
     private const string Tenant = "";
+    private static readonly System.Text.Json.JsonElement EmptyData = System.Text.Json.JsonSerializer.SerializeToElement(new { });
 
     public async Task<UserTaskQueryResultDto> ListAsync(ClaimsPrincipal user, string scope, string? status, string? workflowInstanceId,
         string? cursor, int limit, bool includeTotalCount, CancellationToken ct)
@@ -89,7 +86,7 @@ public sealed class TaskService(IUserTaskManager manager, IUserTaskIdentityResol
         var actor = await ActorAsync(user, "complete", ct);
         // Data is validated by the task's form provider (reason/comment rules, RESUBMIT attributes) inside Elsa.
         var completion = new UserTaskCompletionRequest(await RevisionAsync(taskId, request.ExpectedRevision, ct), OperationId(request.OperationId),
-            request.ActionKey, request.Data ?? System.Text.Json.JsonDocument.Parse("{}").RootElement);
+            request.ActionKey, request.Data ?? EmptyData);
         return await RunAsync(user, taskId, true, () => manager.CompleteAsync(Tenant, taskId, completion, actor, ct), ct);
     }
 
@@ -98,7 +95,7 @@ public sealed class TaskService(IUserTaskManager manager, IUserTaskIdentityResol
     {
         if (user.Identity?.IsAuthenticated != true) throw new ApiException(401, "A valid bearer token is required.");
         if (!string.IsNullOrEmpty(user.FindFirstValue("tenant"))) throw new ApiException(403, "This version supports the default organization only.");
-        if (!ConfigurationAccess.HasPermission(user, "user-tasks", verb)) throw new ApiException(403, $"Permission user-tasks:{verb} is required.");
+        if (!PermissionChecks.HasPermission(user, "user-tasks", verb)) throw new ApiException(403, $"Permission user-tasks:{verb} is required.");
         return await identities.ResolveAsync(user, ct) ?? throw new ApiException(403, "Unknown task user.");
     }
 

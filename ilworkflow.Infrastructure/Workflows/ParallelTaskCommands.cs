@@ -121,9 +121,3 @@ public sealed class ParallelTaskCommands(IConfiguration configuration, IUserTask
         // Disposing the lock transaction releases it even when the native command fails.
     }
 }
-
-public sealed class ParallelTaskWorkflowResumer(ParallelTaskCommands commands) : IUserTaskWorkflowResumer
-{
-    public Task ResumeAsync(UserTask task, UserTaskStimulus stimulus, CancellationToken cancellationToken = default) =>
-        commands.ResumeAsync(task, stimulus, cancellationToken);
-}

@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
-namespace IlWorkflow.Infrastructure.Persistence;
+namespace IlWorkflow.Infrastructure.Persistence.Migrations;
 
 /// <summary>The attribute catalog is removed for now; configurations always carry an empty attributes list. Down restores the empty table.</summary>
 [DbContext(typeof(ApplicationDbContext))]

@@ -1,9 +1,9 @@
 using System.Security.Claims;
 using Elsa.Authorization;
 
-namespace IlWorkflow.Infrastructure.Configuration;
+namespace IlWorkflow.Infrastructure.Authorization;
 
-public static class ConfigurationAccess
+public static class PermissionChecks
 {
     public static bool HasPermission(ClaimsPrincipal user, string resource, string verb) =>
         user.FindAll("permissions").Any(claim => Permission.TryParse(claim.Value, out var grant) && PermissionMatcher.Satisfies(grant, new Permission(resource, verb)));
