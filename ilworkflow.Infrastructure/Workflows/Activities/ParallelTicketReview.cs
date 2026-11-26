@@ -9,7 +9,7 @@ using UserTask = Elsa.UserTasks.Activities.UserTask;
 namespace IlWorkflow.Api.Workflows;
 
 [Activity("Tickets", "Tickets", "Runs parallel reviews and continues on the first approval.")]
-[FlowNode("Approve", "Reject")]
+[FlowNode(StagePorts.Approve, StagePorts.Reject)]
 public sealed class ParallelTicketReview : Activity
 {
     public const string TaskType = "configured-parallel-ticket";
@@ -36,9 +36,11 @@ public sealed class ParallelTicketReview : Activity
             context.SetProperty("rejectedBranches", rejectedBranches);
             if (rejectedBranches < Branches.Count) return;
         }
+        else if (!string.Equals(stimulus.ActionKey, TaskActionKeys.Approve, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Unknown parallel review decision.");
 
         context.WorkflowExecutionContext.Output["lastDecision"] = rejected ? TaskActionKeys.Reject : TaskActionKeys.Approve;
         // Completing a composite cancels its remaining active children and removes their bookmarks.
-        await context.CompleteActivityWithOutcomesAsync(rejected ? "Reject" : "Approve");
+        await context.CompleteActivityWithOutcomesAsync(rejected ? StagePorts.Reject : StagePorts.Approve);
     }
 }

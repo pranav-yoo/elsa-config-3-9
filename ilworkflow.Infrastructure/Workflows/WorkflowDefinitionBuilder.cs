@@ -38,7 +38,7 @@ public sealed class WorkflowDefinitionBuilder
             var correctionId = corrections.Keys.Any(x => x.Origin == origin) ? $"correction_{origin}_{destination.StageKey}" : "correction_" + origin;
             corrections[(origin, destination.StageKey!)] = correctionId;
             activities.Add(Review(correctionId, origin, correction: true));
-            Link(correctionId, "Resubmit", "stage_" + destination.StageKey);
+            Link(correctionId, StagePorts.Resubmit, "stage_" + destination.StageKey);
             return correctionId;
         }
         // An action's rules become a chain of FlowDecision nodes reading the persisted typed comparison
@@ -73,22 +73,22 @@ public sealed class WorkflowDefinitionBuilder
             if (stage.ParallelWith is not null)
             {
                 // The group decides: the first approval continues, all rejections reject (see ParallelTicketReview).
-                Link(id, "Reject", ActionEntry(stage, actions.Single(x => x.Key == TaskActionKeys.Reject)));
-                Link(id, "Approve", ActionEntry(stage, actions.Single(x => x.Key == TaskActionKeys.Approve)));
+                Link(id, StagePorts.Reject, ActionEntry(stage, actions.Single(x => x.Key == TaskActionKeys.Reject)));
+                Link(id, StagePorts.Approve, ActionEntry(stage, actions.Single(x => x.Key == TaskActionKeys.Approve)));
                 continue;
             }
-            // Every action shares one "Action" port; TicketReview records the chosen key in lastAction and a chain of
-            // FlowDecision nodes sends it to that action's rules/destination. The last action needs no decision of its own.
-            var entries = actions.Select(action => ActionEntry(stage, action)).ToArray();
-            Link(id, "Action", actions.Length == 1 ? entries[0] : $"action_{stage.Key}_0");
-            for (var i = 0; i < actions.Length - 1; i++)
+            // Every action shares one "Action" port; TicketReview records the chosen key in lastAction and a
+            // FlowDecision chain sends it to that action's rules/destination.
+            for (var i = 0; i < actions.Length; i++)
             {
                 var nodeId = $"action_{stage.Key}_{i}";
+                if (i == 0) Link(id, StagePorts.Action, nodeId);
                 activities.Add(new { id = nodeId, type = "Elsa.FlowDecision", version = 1,
                     condition = new { typeName = "Boolean", expression = new { type = "JavaScript",
                         value = $"getVariable('lastAction') === {JsonSerializer.Serialize(actions[i].Key)}" } } });
-                Link(nodeId, "True", entries[i]);
-                Link(nodeId, "False", i + 2 < actions.Length ? $"action_{stage.Key}_{i + 1}" : entries[i + 1]);
+                Link(nodeId, "True", ActionEntry(stage, actions[i]));
+                // Unreachable for validated input (the form provider only accepts configured keys); fail closed.
+                Link(nodeId, "False", i + 1 < actions.Length ? $"action_{stage.Key}_{i + 1}" : "rejected");
             }
         }
         const string storageDriver = "Elsa.Workflows.WorkflowInstanceStorageDriver, Elsa.Workflows.Core";

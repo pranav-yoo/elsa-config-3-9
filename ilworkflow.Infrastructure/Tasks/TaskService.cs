@@ -92,6 +92,7 @@ public sealed class TaskService(IUserTaskManager manager, IUserTaskIdentityResol
     // Same checks Elsa's endpoints apply: authenticated, default organization, permission for the operation.
     private async Task<UserTaskActor> ActorAsync(ClaimsPrincipal user, string verb, CancellationToken ct)
     {
+        if (user.Identity?.IsAuthenticated != true) throw new ApiException(401, "A valid bearer token is required.");
         if (!string.IsNullOrEmpty(user.FindFirstValue("tenant"))) throw new ApiException(403, "This version supports the default organization only.");
         if (!PermissionChecks.HasPermission(user, "user-tasks", verb)) throw new ApiException(403, $"Permission user-tasks:{verb} is required.");
         return await identities.ResolveAsync(user, ct) ?? throw new ApiException(403, "Unknown task user.");
