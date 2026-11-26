@@ -1,5 +1,6 @@
 using FluentValidation;
-namespace IlWorkflow.Application.Configuration;
+
+namespace IlWorkflow.Application.Validation;
 
 public sealed class AttributeDefinitionValidator : AbstractValidator<AttributeDefinition>
 {
@@ -16,8 +17,4 @@ public sealed class AttributeDefinitionValidator : AbstractValidator<AttributeDe
             if ((field.Minimum is not null || field.Maximum is not null) && field.Type is not (AttributeType.Decimal or AttributeType.Integer)) context.AddFailure("Numeric limits apply to numbers only.");
         });
     }
-}
-public sealed class DefinitionIdValidator : AbstractValidator<string>
-{
-    public DefinitionIdValidator() => RuleFor(x => x).NotEmpty().Matches("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$");
 }

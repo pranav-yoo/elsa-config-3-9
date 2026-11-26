@@ -1,17 +1,11 @@
-using System.Diagnostics;
-using IlWorkflow.Infrastructure.Configuration;
 using IlWorkflow.Infrastructure.Persistence;
-using IlWorkflow.Infrastructure.Authorization;
 using IlWorkflow.Api.Workflows;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json.Serialization;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Elsa.Extensions;
 using Elsa.Persistence.EFCore.Extensions;
 using Elsa.Persistence.EFCore.Modules.Management;
 using Elsa.Persistence.EFCore.Modules.Runtime;
-
-using Npgsql;
 
 using Elsa.Workflows.Activities.Flowchart.Extensions;
 using Elsa.Persistence.EFCore.Modules.Identity;
@@ -25,7 +19,7 @@ using IlWorkflow.Infrastructure.Persistence.UserTasks;
 using IlWorkflow.Infrastructure.Tasks;
 using IlWorkflow.Infrastructure.Authentication;
 
-namespace IlWorkflow.API.Services;
+namespace IlWorkflow.API.Extensions;
 
 /// <summary>API composition root: wire application ports to PostgreSQL/Elsa adapters here.
 /// Domain and Application never reference this host, EF Core, or Elsa packages.</summary>
@@ -104,7 +98,7 @@ public static class WorkflowServiceRegistration
         {
             options.SuppressImplicitRequiredAttributeForNonNullableReferenceTypes = true;
             // Model-binding errors on /api/* use the same Result<T> body as controllers.
-            options.Filters.Add<IlWorkflow.API.Middleware.ApiResponseFilter>();
+            options.Filters.Add<ApiResponseFilter>();
         }).AddJsonOptions(options =>
         {
             options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter(allowIntegerValues: false));

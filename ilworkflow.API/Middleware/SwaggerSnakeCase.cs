@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-namespace IlWorkflow.API.Common;
+namespace IlWorkflow.API.Middleware;
 
 /// <summary>
 /// Elsa's AddSwagger() generates the OpenAPI document with FastEndpoints, which ignores the MVC

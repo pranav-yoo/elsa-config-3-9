@@ -1,5 +1,10 @@
 global using IlWorkflow.Domain.Configuration;
-global using IlWorkflow.Application.Configuration;
+global using IlWorkflow.Domain.Entities;
+global using IlWorkflow.Domain.Enums;
+global using IlWorkflow.Domain.Rules;
+global using IlWorkflow.Application.Abstractions;
+global using IlWorkflow.Application.Common;
+global using IlWorkflow.Application.Validation;
 global using IlWorkflow.Infrastructure.Authorization;
 global using Microsoft.Extensions.Configuration;
 global using Microsoft.Extensions.DependencyInjection;

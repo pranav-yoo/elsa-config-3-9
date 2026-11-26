@@ -4,7 +4,7 @@ using Elsa.Workflows;
 using Elsa.Workflows.Attributes;
 using Elsa.Workflows.Models;
 using FluentValidation;
-using ConfigJson = IlWorkflow.Application.Configuration.ConfigurationJson;
+using ConfigJson = IlWorkflow.Application.Common.ConfigurationJson;
 
 namespace IlWorkflow.Api.Workflows;
 

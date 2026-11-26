@@ -39,12 +39,12 @@ Approver token
 |---|---|---|
 | ilworkflow.API/Controllers/WorkflowConfigurationController.cs | Save, Get, Validate, Publish, NextDraft | Conventional controller; HTTP binding, authorization and responses only. POST implements create/update. |
 | ilworkflow.Infrastructure/Configuration/WorkflowConfigurationService.cs | SaveAsync (create, update or next version), PublishAsync, ApplySetup | Coordinate our schema snapshot with native Elsa version lifecycle; never manage task claims. |
-| ilworkflow.Domain/WorkflowConfiguration.cs | records/enums/JSON settings | Define the supported configuration vocabulary; reject unknown enum values rather than accept arbitrary strings or script source. |
-| ilworkflow.Application/WorkflowConfigurationValidators.cs | WorkflowConfigurationValidator, TicketInputValidator, AttributeRules | Centralize field validation, eligibility, typed conditions and graph checks using FluentValidation. |
+| ilworkflow.Domain/Configuration, Entities, Enums, Rules | records, entity, enums and exact comparisons | Define the supported configuration vocabulary; reject unknown enum values rather than accept arbitrary strings or script source. |
+| ilworkflow.Application/Validation/ | WorkflowConfigurationValidator, TicketInputValidator, TaskDecisionValidator | Centralize field validation, eligibility, typed conditions and graph checks using FluentValidation. |
 | ilworkflow.Infrastructure/Persistence/ApplicationDbContext.cs, Migrations/ | model mapping and explicit migrations | Store version-linked JSONB configuration and the preconfigured attribute master, using a separate schema and migration history. |
 | ilworkflow.Infrastructure/Workflows/WorkflowDefinitionBuilder.cs | Build | Compile configuration into a native flowchart; native FlowDecision nodes read persisted typed comparison results. |
 | ilworkflow.Infrastructure/Workflows/Activities/ | InitializeTicket, TicketReview, ParallelTicketReview, FinishTicket, TicketState | Thin typed integration activities around native human tasks; own no task table or claim state. |
-| ilworkflow.Application/AssignmentResolver.cs | ResolveAsync | Select eligible candidates/initial owner from supported policies; Elsa owns the resulting assignment. |
+| ilworkflow.Application/Workflows/AssignmentResolver.cs | ResolveAsync | Select eligible candidates/initial owner from supported policies; Elsa owns the resulting assignment. |
 | ilworkflow.Infrastructure/Workflows/TicketFormProvider.cs | ResolveAsync, ValidateAndNormalizeAsync | Make validation unavoidable even when a client calls native Elsa complete directly. |
 | ilworkflow.API/Middleware/WorkflowRequestGuard.cs | InvokeAsync | Protect existing Elsa routes; it is middleware, not an endpoint/controller. |
 | ilworkflow.Infrastructure/Authorization/WorkflowAccessService.cs | CanReadInstanceAsync | Restrict native instance reads to requester, participating workers or supervisors. |

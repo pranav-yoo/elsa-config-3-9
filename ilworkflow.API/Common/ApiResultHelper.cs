@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Abstractions;
-using Microsoft.AspNetCore.Routing;
 
 namespace IlWorkflow.API.Common;
 
@@ -23,6 +22,17 @@ public static class ApiResultHelper
         var list = messages.Where(m => !string.IsNullOrWhiteSpace(m)).ToList();
         if (list.Count == 0 && statusCode is >= 200 and <= 299) list.Add(DefaultSuccessMessage);
         return new(new Result<T>(statusCode, list, data)) { StatusCode = statusCode };
+    }
+
+    /// <summary>Elsa's native /elsa/api/* endpoints keep Elsa's own format; everything under /api uses Result&lt;T&gt;.</summary>
+    public static bool Applies(HttpContext http) => http.Request.Path.StartsWithSegments("/api");
+
+    /// <summary>Error body: Result&lt;T&gt; for /api/*, otherwise the previous { code, message, errors } shape.</summary>
+    public static Task WriteErrorAsync(HttpContext http, int status, string code, string message, object? errors = null)
+    {
+        http.Response.StatusCode = status;
+        if (Applies(http)) return WriteAsync(http, Error(status, code, message, errors));
+        return errors is null ? http.Response.WriteAsJsonAsync(new { code, message }) : http.Response.WriteAsJsonAsync(new { code, errors });
     }
 
     /// <summary>Write a result outside MVC (middleware) with the same serializer settings as controllers.</summary>

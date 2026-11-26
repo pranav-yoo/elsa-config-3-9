@@ -7,11 +7,11 @@ API -> Application -> Domain
 API -> Infrastructure -> Application / Domain
 ```
 
-- **Domain:** WorkflowConfiguration.cs contains the entity, enums and value records. AttributeRules.cs contains exact comparisons and field constraints. No external package dependencies.
+- **Domain:** Folders: Entities (WorkflowConfiguration), Enums, Configuration (value records such as WorkflowSetup and StageDefinition) and Rules (AttributeRules exact comparisons, TaskActionKeys). No external package dependencies.
 - **Contracts:** every HTTP request and response model, grouped by module (`WorkflowConfigurations`, `Tasks`), each with `Requests/` and `Responses/` folders and matching namespaces. It references Domain for the shared value types (stages, attribute definitions) and has no Elsa, EF Core or ASP.NET dependency. Elsa's own native response types stay with Elsa.
-- **Application:** Abstractions.cs contains JSON helpers, errors and the IWorkflowConfigurationService/IApproverDirectory ports. Validators enforce configuration/input/decision rules. AssignmentResolver selects eligible participants through the directory port. References Domain and FluentValidation only.
+- **Application:** Folders: Abstractions (IWorkflowConfigurationService and IApproverDirectory ports), Common (ConfigurationJson, ApiException), Validation and Workflows (AssignmentResolver). Validators enforce configuration/input/decision rules. AssignmentResolver selects eligible participants through the directory port. References Domain and FluentValidation only.
 - **Infrastructure:** WorkflowConfigurationService implements the application port using EF and native Elsa publishing. Folders: Authentication (user-token scheme), Authorization (permission checks, observer/supervisor access policy, instance read access), Configuration (the service), Identity (ApproverDirectory resolves approver roles from Elsa Identity), Persistence (DbContext, Migrations/, UserTasks/ provider fixes), Tasks (TaskService, observed/supervised query) and Workflows (graph builder, form adapter, parallel-task locking, Activities/).
-- **API:** Controllers bind requests; middleware guards native execution. Services/WorkflowServiceRegistration.cs connects ports/adapters and registers Elsa/custom services. Program.cs owns startup, diagnostics, database initialization and the request pipeline.
+- **API:** Folders: Controllers, Common (ApiResultHelper builds every Result<T> response), Extensions (service registration, startup helpers), Filters, Middleware. Controllers bind requests; middleware guards native execution. Extensions/WorkflowServiceRegistration.cs connects ports/adapters and registers Elsa/custom services. Program.cs owns startup, diagnostics, database initialization and the request pipeline.
 
 No generic repository wrappers, mediator pipeline or replacement task tables were added. EF/Elsa-dependent orchestration stays behind the application service port.
 

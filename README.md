@@ -22,7 +22,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File ./Setup.ps1
 dotnet run --project ilworkflow.API --launch-profile http
 ```
 
-Open http://localhost:5000/swagger. API owns appsettings, launch profiles and Samples. Custom composition is in `ilworkflow.API/Services/WorkflowServiceRegistration.cs`.
+Open http://localhost:5000/swagger. API owns appsettings, launch profiles and Samples. Custom composition is in `ilworkflow.API/Extensions/WorkflowServiceRegistration.cs`.
 
 Development uses PostgreSQL localhost:5432, database ilworkflow, account postgres. Credentials/signing keys belong in API user secrets. The existing UserSecretsId `ilworkflow-elsa-local` is unchanged. Restart does not reset persisted passwords. Packages remain pinned to Elsa 3.9.0.
 

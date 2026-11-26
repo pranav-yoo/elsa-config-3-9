@@ -1,8 +1,8 @@
 using System.Text.Json;
 using FluentValidation;
-namespace IlWorkflow.Application.Configuration;
 
-public sealed record DecisionData(string Action, JsonElement Data);
+namespace IlWorkflow.Application.Validation;
+
 public sealed class TaskDecisionValidator : AbstractValidator<DecisionData>
 {
     /// <param name="stageKey">Stage of a review task; null for tasks created before custom actions (APPROVE/REJECT only).</param>
@@ -36,4 +36,3 @@ public sealed class TaskDecisionValidator : AbstractValidator<DecisionData>
         });
     }
 }
-

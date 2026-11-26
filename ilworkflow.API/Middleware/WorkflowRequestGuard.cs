@@ -8,7 +8,6 @@ using Elsa.UserTasks.Models;
 using Elsa.Workflows.Management;
 using Elsa.Workflows.Management.Filters;
 using FluentValidation;
-using IlWorkflow.Infrastructure.Configuration;
 using IlWorkflow.Infrastructure.Persistence;
 using IlWorkflow.Infrastructure.Tasks;
 using IlWorkflow.Api.Workflows;
@@ -142,30 +141,30 @@ public sealed class WorkflowRequestGuard
         catch (ValidationException exception)
         {
             var errors = exception.Errors.Select(x => new { field = x.PropertyName, message = x.ErrorMessage }).ToArray();
-            await ApiResponse.WriteErrorAsync(http, 400, "validation_failed", string.Join(" ", errors.Select(x => x.message)), errors);
+            await ApiResultHelper.WriteErrorAsync(http, 400, "validation_failed", string.Join(" ", errors.Select(x => x.message)), errors);
         }
         catch (ApiException exception)
         {
-            await ApiResponse.WriteErrorAsync(http, exception.Status, "request_rejected", exception.Message);
+            await ApiResultHelper.WriteErrorAsync(http, exception.Status, "request_rejected", exception.Message);
         }
         catch (DbUpdateException exception) when (exception.InnerException is Npgsql.PostgresException
             { SqlState: Npgsql.PostgresErrorCodes.UniqueViolation })
         {
             // Two simultaneous task commands can both pass the initial operation lookup. The native
             // store's unique index remains authoritative; expose its race as a conflict, not HTTP 500.
-            await ApiResponse.WriteErrorAsync(http, 409, "operation_conflict", "A competing operation was already recorded. Reload the task before deciding whether to retry.");
+            await ApiResultHelper.WriteErrorAsync(http, 409, "operation_conflict", "A competing operation was already recorded. Reload the task before deciding whether to retry.");
         }
         catch (DbUpdateConcurrencyException)
         {
-            await ApiResponse.WriteErrorAsync(http, 409, "revision_conflict", "Read the current revision and retry the intended change.");
+            await ApiResultHelper.WriteErrorAsync(http, 409, "revision_conflict", "Read the current revision and retry the intended change.");
         }
         catch (BadHttpRequestException exception)
         {
-            await ApiResponse.WriteErrorAsync(http, exception.StatusCode, "invalid_request", "Check request size and content type.");
+            await ApiResultHelper.WriteErrorAsync(http, exception.StatusCode, "invalid_request", "Check request size and content type.");
         }
         catch (JsonException)
         {
-            await ApiResponse.WriteErrorAsync(http, 400, "invalid_json", "Check JSON types, enum names and required objects.");
+            await ApiResultHelper.WriteErrorAsync(http, 400, "invalid_json", "Check JSON types, enum names and required objects.");
         }
         finally
         {

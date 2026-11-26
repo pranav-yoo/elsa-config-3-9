@@ -1,15 +1,11 @@
 using System.Text.Json;
 
-
-
 namespace IlWorkflow.Application.Workflows;
-
-public sealed record ResolvedAssignment(string[] Candidates, string? Assignee, bool Blocked);
 
 /// <summary>Selects participants only. Elsa remains responsible for claiming, ownership and completion.</summary>
 public sealed class AssignmentResolver(IApproverDirectory users)
 {
-    public async Task<ResolvedAssignment> ResolveAsync(IlWorkflow.Domain.Configuration.AssignmentDefinition assignment, Dictionary<string, JsonElement> attributes, CancellationToken ct)
+    public async Task<ResolvedAssignment> ResolveAsync(AssignmentDefinition assignment, Dictionary<string, JsonElement> attributes, CancellationToken ct)
     {
         var eligible = new List<string>();
         foreach (var member in assignment.Members)

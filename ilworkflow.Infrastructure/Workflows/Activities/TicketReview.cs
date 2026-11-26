@@ -10,7 +10,7 @@ using Elsa.Workflows.Activities.Flowchart.Attributes;
 using Elsa.Workflows.Models;
 using FluentValidation;
 using UserTask = Elsa.UserTasks.Activities.UserTask;
-using ConfigJson = IlWorkflow.Application.Configuration.ConfigurationJson;
+using ConfigJson = IlWorkflow.Application.Common.ConfigurationJson;
 
 namespace IlWorkflow.Api.Workflows;
 

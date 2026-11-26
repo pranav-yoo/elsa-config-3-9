@@ -1,5 +1,8 @@
 using System.Text.Json;
-namespace IlWorkflow.Domain.Configuration;
+using IlWorkflow.Domain.Configuration;
+using IlWorkflow.Domain.Enums;
+
+namespace IlWorkflow.Domain.Rules;
 
 /// <summary>One typed comparison implementation is shared by validation, assignment and generated conditions.</summary>
 public static class AttributeRules
