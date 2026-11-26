@@ -27,14 +27,11 @@ builder.Logging.AddSimpleConsole(options =>
     options.TimestampFormat = "HH:mm:ss ";
     options.IncludeScopes = true;
 });
-builder.Services.AddBearerFailureLogging();
 
 var app = builder.Build();
-app.UseApiExceptionHandler();
 await app.InitializeDevelopmentDatabaseAsync(connectionString, swaggerPreview);
 app.Lifetime.ApplicationStarted.Register(() => app.Logger.LogInformation("Application ready. Storage mode: {StorageMode}", swaggerPreview ? "in memory" : "PostgreSQL; Elsa startup migrations completed"));
 
-app.UseMiddleware<RequestLoggingMiddleware>();
 // Apply application migrations without touching Elsa's separate migration histories.
 // Preview is documentation-only and must work while PostgreSQL is unavailable.
 if (!swaggerPreview)

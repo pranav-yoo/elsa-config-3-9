@@ -15,7 +15,7 @@ using ConfigJson = IlWorkflow.Application.Common.ConfigurationJson;
 namespace IlWorkflow.Api.Workflows;
 
 [Activity("Tickets", "Tickets", "Schedules one native approval or correction task.")]
-[FlowNode("Approve", "Reject", "Resubmit", "Custom")]
+[FlowNode(StagePorts.Action, StagePorts.Resubmit)]
 public sealed class TicketReview : Activity
 {
     [Input] public Input<string> ConfigurationJson { get; set; } = null!;
@@ -30,10 +30,8 @@ public sealed class TicketReview : Activity
         context.GetProperty<string>("stageKey") is { } key && context.GetProperty<string>("schema") is { } schema
             ? ConfigJson.Read<WorkflowSetup>(schema).Stages.FirstOrDefault(x => x.Key == key)
             : null;
-    private static readonly UserTaskActionDefinition[] BuiltInActions =
-        [new(TaskActionKeys.Approve, "Approve"), new(TaskActionKeys.Reject, "Reject")];
     private static UserTaskActionDefinition[] ActionsOf(ActivityExecutionContext context) =>
-        StageOf(context)?.Actions?.Select(x => new UserTaskActionDefinition(x.Key, x.DisplayLabel)).ToArray() ?? BuiltInActions;
+        StageOf(context)?.Actions?.Select(x => new UserTaskActionDefinition(x.Key, x.DisplayLabel)).ToArray() ?? [];
     private static ResolvedAssignment Assignment(ExpressionExecutionContext context) => ConfigJson.Read<ResolvedAssignment>(Parent(context).GetProperty<string>("assignment")!);
     public TicketReview()
     {
@@ -109,40 +107,35 @@ public sealed class TicketReview : Activity
     {
         var context = completed.TargetContext;
         var stimulus = context.GetWorkflowInput<UserTaskStimulus>(UserTask.InputKey);
-        var decision = TaskActionKeys.Parse(stimulus.ActionKey);
-        if (decision is null)
+        var parallelBranch = context.GetProperty<bool>("parallelBranch");
+        if (!string.Equals(stimulus.ActionKey, TaskActionKeys.Resubmit, StringComparison.OrdinalIgnoreCase))
         {
-            // A configured custom action (e.g. REFER_UW). The form provider already checked it belongs to this stage.
-            // Older pending tasks have no stageKey property and only offer the built-in actions.
-            var custom = StageOf(context)?.CustomActions.FirstOrDefault(x => string.Equals(x.Key, stimulus.ActionKey, StringComparison.OrdinalIgnoreCase));
-            if (custom is null) throw new InvalidOperationException("Unknown task decision.");
-            context.ExpressionExecutionContext.SetVariable("lastAction", custom.Key);
-            context.WorkflowExecutionContext.Output["lastDecision"] = custom.Key;
-            await context.CompleteActivityWithOutcomesAsync(nameof(TaskDecision.Custom));
+            // A configured stage action. The form provider already checked it belongs to this stage.
+            var action = StageOf(context)?.Actions?.FirstOrDefault(x => string.Equals(x.Key, stimulus.ActionKey, StringComparison.OrdinalIgnoreCase))
+                ?? throw new InvalidOperationException("Unknown task action.");
+            if (!parallelBranch)
+            {
+                context.ExpressionExecutionContext.SetVariable("lastAction", action.Key);
+                context.WorkflowExecutionContext.Output["lastDecision"] = action.Key;
+            }
+            await context.CompleteActivityWithOutcomesAsync(StagePorts.Action);
             return;
         }
-        // The task form provider already validated the payload. Revalidate at the execution boundary,
+        // A correction task: the form provider already validated the payload. Revalidate at the execution boundary,
         // preserve the preceding snapshot, then expose a Resubmit outcome to the graph's configured edge.
-        if (decision == TaskDecision.Resubmit)
-        {
-            var attributes = stimulus.CompletionData!.Value.GetProperty("attributes").Deserialize<Dictionary<string, JsonElement>>()!;
-            var schema = ConfigJson.Read<WorkflowSetup>(context.GetProperty<string>("schema")!);
-            await new TicketInputValidator(schema).ValidateAndThrowAsync(attributes, context.CancellationToken);
-            var output = context.WorkflowExecutionContext.Output;
-            var revision = int.Parse(output["attributeRevision"].ToString()!) + 1;
-            var storedHistory = JsonSerializer.SerializeToElement(output["attributeHistory"]);
-            // Older Elsa property-bag serialization may wrap collections in $values.
-            if (storedHistory.ValueKind == JsonValueKind.Object && storedHistory.TryGetProperty("$values", out var wrapped)) storedHistory = wrapped;
-            var history = storedHistory.EnumerateArray().Select(x => x.Clone()).ToList();
-            history.Add(JsonSerializer.SerializeToElement(new { revision, attributes }));
-            output["attributeRevision"] = revision;
-            output["attributeHistory"] = JsonSerializer.SerializeToElement(history);
-            TicketState.SetAttributes(context, attributes, schema);
-        }
-        var outcome = decision.Value.ToString();
-        if (!context.GetProperty<bool>("parallelBranch"))
-            context.WorkflowExecutionContext.Output["lastDecision"] = outcome;
-        // Persisted graphs use enum names for ports, independently of the public task action keys.
-        await context.CompleteActivityWithOutcomesAsync(outcome);
+        var attributes = stimulus.CompletionData!.Value.GetProperty("attributes").Deserialize<Dictionary<string, JsonElement>>()!;
+        var schema = ConfigJson.Read<WorkflowSetup>(context.GetProperty<string>("schema")!);
+        await new TicketInputValidator(schema).ValidateAndThrowAsync(attributes, context.CancellationToken);
+        var output = context.WorkflowExecutionContext.Output;
+        var revision = int.Parse(output["attributeRevision"].ToString()!) + 1;
+        var storedHistory = JsonSerializer.SerializeToElement(output["attributeHistory"]);
+        // Older Elsa property-bag serialization may wrap collections in $values.
+        if (storedHistory.ValueKind == JsonValueKind.Object && storedHistory.TryGetProperty("$values", out var wrapped)) storedHistory = wrapped;
+        var history = storedHistory.EnumerateArray().Select(x => x.Clone()).ToList();
+        history.Add(JsonSerializer.SerializeToElement(new { revision, attributes }));
+        output["attributeRevision"] = revision;
+        output["attributeHistory"] = JsonSerializer.SerializeToElement(history);
+        TicketState.SetAttributes(context, attributes, schema);
+        await context.CompleteActivityWithOutcomesAsync(StagePorts.Resubmit);
     }
 }

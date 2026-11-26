@@ -9,7 +9,7 @@ using UserTask = Elsa.UserTasks.Activities.UserTask;
 namespace IlWorkflow.Api.Workflows;
 
 [Activity("Tickets", "Tickets", "Runs parallel reviews and continues on the first approval.")]
-[FlowNode(nameof(TaskDecision.Approve), nameof(TaskDecision.Reject))]
+[FlowNode(StagePorts.Approve, StagePorts.Reject)]
 public sealed class ParallelTicketReview : Activity
 {
     public const string TaskType = "configured-parallel-ticket";
@@ -28,20 +28,19 @@ public sealed class ParallelTicketReview : Activity
     {
         var context = completed.TargetContext;
         var stimulus = context.GetWorkflowInput<UserTaskStimulus>(UserTask.InputKey);
-        var decision = TaskActionKeys.Parse(stimulus.ActionKey);
-        if (decision == TaskDecision.Reject)
+        var rejected = string.Equals(stimulus.ActionKey, TaskActionKeys.Reject, StringComparison.OrdinalIgnoreCase);
+        if (rejected)
         {
             // This activity context is persisted per visit, including across rejection and restart.
-            var rejected = context.GetProperty<int>("rejectedBranches") + 1;
-            context.SetProperty("rejectedBranches", rejected);
-            if (rejected < Branches.Count) return;
+            var rejectedBranches = context.GetProperty<int>("rejectedBranches") + 1;
+            context.SetProperty("rejectedBranches", rejectedBranches);
+            if (rejectedBranches < Branches.Count) return;
         }
-        else if (decision != TaskDecision.Approve)
+        else if (!string.Equals(stimulus.ActionKey, TaskActionKeys.Approve, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Unknown parallel review decision.");
 
-        var outcome = decision.Value.ToString();
-        context.WorkflowExecutionContext.Output["lastDecision"] = outcome;
+        context.WorkflowExecutionContext.Output["lastDecision"] = rejected ? TaskActionKeys.Reject : TaskActionKeys.Approve;
         // Completing a composite cancels its remaining active children and removes their bookmarks.
-        await context.CompleteActivityWithOutcomesAsync(outcome);
+        await context.CompleteActivityWithOutcomesAsync(rejected ? StagePorts.Reject : StagePorts.Approve);
     }
 }

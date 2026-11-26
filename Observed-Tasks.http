@@ -49,7 +49,7 @@ Content-Type: application/json
         "assignment": { "policy": "Specific", "members": ["57cdff015b09629b"] },
         "actions": [
           { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Stage", "stage_key": "D" }  },
-          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Rejected" } }
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Rejected" }, "require_reason": true }
         ]
       },
       {
@@ -57,7 +57,7 @@ Content-Type: application/json
         "assignment": { "policy": "Specific", "members": ["b8d227eec7f9b8e9"] },
         "actions": [
           { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Approved" } },
-          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Rejected" } }
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Rejected" }, "require_reason": true }
         ]
       }
     ]

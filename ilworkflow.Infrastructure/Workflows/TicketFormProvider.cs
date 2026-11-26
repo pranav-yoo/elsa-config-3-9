@@ -15,7 +15,7 @@ public sealed class TicketFormProvider : IUserTaskFormProvider
         {
             Fields = reference.Key == "correction"
                 ? setup.Attributes.Select(x => new UserTaskFormFieldDescriptor(x.Key, x.Key, x.Type.ToString(), x.Required)).ToArray()
-                : [new UserTaskFormFieldDescriptor("reason", "Reason required for rejection")]
+                : [new UserTaskFormFieldDescriptor("reason", "Reason")]
         });
     }
     public async Task<UserTaskFormValidationResult> ValidateAndNormalizeAsync(ResolvedUserTaskForm form, string actionKey, JsonElement data, CancellationToken cancellationToken = default)

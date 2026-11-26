@@ -5,6 +5,9 @@ using IlWorkflow.Api.Workflows;
 
 namespace IlWorkflow.Infrastructure.Tasks;
 
+/// <summary>Result of a task command: Accepted (HTTP 202) with the updated task, or a conflict (HTTP 409).</summary>
+public sealed record TaskCommandResult(bool Accepted, object Body);
+
 /// <summary>
 /// Application wrapper over Elsa's native user-task manager. Add company authentication/validation in front of
 /// these methods. Every native rule still applies: candidate/owner checks, revisions, operation idempotency,

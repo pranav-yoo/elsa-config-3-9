@@ -2,6 +2,8 @@ using System.Text.Json;
 
 namespace IlWorkflow.Application.Workflows;
 
+public sealed record ResolvedAssignment(string[] Candidates, string? Assignee, bool Blocked);
+
 /// <summary>Selects participants only. Elsa remains responsible for claiming, ownership and completion.</summary>
 public sealed class AssignmentResolver(IApproverDirectory users)
 {

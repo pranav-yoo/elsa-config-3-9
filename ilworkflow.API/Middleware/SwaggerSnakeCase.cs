@@ -32,7 +32,7 @@ public static class SwaggerSnakeCase
         await original.WriteAsync(bytes, http.RequestAborted);
     });
 
-    // Only PascalCase names are converted: explicit names (legacy approveTo, ...) are already what the serializer emits.
+    // Only PascalCase names are converted: explicit names (already lower-case) are already what the serializer emits.
     private static string Convert(string name) => char.IsUpper(name[0]) ? JsonNamingPolicy.SnakeCaseLower.ConvertName(name) : name;
 
     private static void Rename(JsonObject schema)

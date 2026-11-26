@@ -9,7 +9,6 @@ global using IlWorkflow.Infrastructure.Configuration;
 global using IlWorkflow.API.Middleware;
 global using IlWorkflow.API.Common;
 global using IlWorkflow.API.Extensions;
-global using IlWorkflow.API.Filters;
 global using IlWorkflow.Contracts.SharedContracts;
 global using IlWorkflow.Contracts.WorkflowConfigurations.Requests;
 global using IlWorkflow.Contracts.WorkflowConfigurations.Responses;

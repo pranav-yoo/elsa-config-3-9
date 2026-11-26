@@ -14,16 +14,20 @@ public sealed class WorkflowConfigurationValidator : AbstractValidator<WorkflowS
         {
             if (setup.Attributes is null || setup.Stages is null || setup.Stages.Length == 0) return;
             if (setup.Attributes.Any(x => x is null) || setup.Stages.Any(x => x is null)) { context.AddFailure("Null fields/stages are not supported."); return; }
-            var invalid = false;
-            void Error(string message) { invalid = true; context.AddFailure(message); }
+            void Error(string message) => context.AddFailure(message);
             bool Key(string key) => !string.IsNullOrEmpty(key) && System.Text.RegularExpressions.Regex.IsMatch(key, "^[A-Za-z][A-Za-z0-9_]{0,63}$");
             if (setup.Attributes.Select(x => x.Key).Distinct().Count() != setup.Attributes.Length) Error("Duplicate attribute keys.");
             if (setup.Stages.Select(x => x.Key).Distinct().Count() != setup.Stages.Length) { Error("Duplicate stage keys."); return; }
             if (!setup.Stages.Any(x => x.Key == setup.StartStage)) Error("Unknown start stage.");
+            // A parallel group means "the first approval continues, all rejections reject", so its stages offer exactly APPROVE and REJECT.
+            static bool OffersApproveAndReject(StageDefinition stage) =>
+                (stage.Actions ?? []).Select(x => x.Key).Order().SequenceEqual([TaskActionKeys.Approve, TaskActionKeys.Reject]);
+            static Dictionary<string, Destination> DestinationsOf(StageDefinition stage) => (stage.Actions ?? []).ToDictionary(x => x.Key, x => x.Destination);
             var parallelMembers = new HashSet<string>(StringComparer.Ordinal);
             foreach (var entry in setup.Stages.Where(stage => stage.ParallelWith is not null))
             {
                 if (entry.ParallelWith!.Length == 0) Error($"Parallel stage '{entry.Key}' must name at least one other stage.");
+                if (!OffersApproveAndReject(entry)) Error($"Parallel stage '{entry.Key}' must offer exactly the {TaskActionKeys.Approve} and {TaskActionKeys.Reject} actions.");
                 foreach (var key in entry.ParallelWith)
                 {
                     var member = setup.Stages.FirstOrDefault(stage => stage.Key == key);
@@ -34,12 +38,11 @@ public sealed class WorkflowConfigurationValidator : AbstractValidator<WorkflowS
                     }
                     if (!parallelMembers.Add(key)) Error($"Parallel stage '{key}' is listed more than once.");
                     if (member.ParallelWith is not null) Error($"Parallel stage '{key}' cannot start another group.");
-                    if (member.ApproveTo != entry.ApproveTo || member.RejectTo != entry.RejectTo)
-                        Error($"Parallel stage '{key}' must match the approval and rejection destinations of '{entry.Key}'.");
-                    if (member.ApproveRules is { Length: > 0 } || member.Reject?.Rules is { Length: > 0 }) Error($"Put parallel routing rules on '{entry.Key}', not '{key}'.");
-                    if (member.CustomActions.Length > 0) Error($"Custom actions are not supported on parallel stage '{key}'.");
+                    if (!OffersApproveAndReject(member)) Error($"Parallel stage '{key}' must offer exactly the {TaskActionKeys.Approve} and {TaskActionKeys.Reject} actions.");
+                    else if (OffersApproveAndReject(entry) && !DestinationsOf(member).OrderBy(x => x.Key).SequenceEqual(DestinationsOf(entry).OrderBy(x => x.Key)))
+                        Error($"Parallel stage '{key}' must match the action destinations of '{entry.Key}'.");
+                    if (member.Actions?.Any(x => x.Rules is { Length: > 0 }) == true) Error($"Put parallel routing rules on '{entry.Key}', not '{key}'.");
                 }
-                if (entry.CustomActions.Length > 0) Error($"Custom actions are not supported on parallel stage '{entry.Key}'.");
             }
             if (parallelMembers.Contains(setup.StartStage)) Error("Start at the entry stage of the parallel group.");
             if (setup.Supervisors is { } supervisors)
@@ -52,12 +55,11 @@ public sealed class WorkflowConfigurationValidator : AbstractValidator<WorkflowS
             var fields = new AttributeDefinitionValidator();
             foreach (var field in setup.Attributes)
                 foreach (var failure in fields.Validate(field).Errors) Error(failure.ErrorMessage);
-            bool DestinationValid(Destination? destination, bool approve)
+            bool DestinationValid(Destination? destination)
             {
                 if (destination is null || !Enum.IsDefined(destination.Kind)) return false;
                 if (destination.Kind is DestinationKind.Stage or DestinationKind.Correction)
-                    return (!approve || destination.Kind != DestinationKind.Correction)
-                        && destination.StageKey is { } key && !parallelMembers.Contains(key)
+                    return destination.StageKey is { } key && !parallelMembers.Contains(key)
                         && setup.Stages.Any(x => x.Key == key);
                 return string.IsNullOrEmpty(destination.StageKey);
             }
@@ -79,28 +81,23 @@ public sealed class WorkflowConfigurationValidator : AbstractValidator<WorkflowS
                 if (conditions.Length > MaxRuleConditions) { Error($"A rule can have at most {MaxRuleConditions} conditions."); return; }
                 foreach (var condition in conditions) ConditionValid(condition);
             }
-            // Every stage lists its task buttons: APPROVE and REJECT (required) plus optional custom actions.
+            // Every stage lists its own task buttons; there are no required or built-in keys.
             void ActionsValid(StageDefinition stage)
             {
                 var actions = stage.Actions;
-                if (actions is not { Length: > 0 } || actions.Any(x => x is null)) { Error($"Stage '{stage.Key}' needs \"actions\" including APPROVE and REJECT."); return; }
-                foreach (var key in new[] { TaskActionKeys.Approve, TaskActionKeys.Reject })
-                    if (actions.Count(x => x.Key == key) != 1) Error($"Stage '{stage.Key}' needs exactly one {key} action.");
+                if (actions is not { Length: > 0 } || actions.Any(x => x is null)) { Error($"Stage '{stage.Key}' needs at least one action in \"actions\"."); return; }
                 if (actions.Select(x => x.Key).Distinct(StringComparer.OrdinalIgnoreCase).Count() != actions.Length) Error($"Duplicate action keys in '{stage.Key}'.");
                 foreach (var action in actions)
                 {
                     if (string.IsNullOrEmpty(action.Key) || !System.Text.RegularExpressions.Regex.IsMatch(action.Key, "^[A-Z][A-Z0-9_]{0,39}$"))
                     { Error($"Action key '{action.Key}' in '{stage.Key}' must be UPPER_CASE letters, digits or underscores (max 40)."); continue; }
                     if (action.Key == TaskActionKeys.Resubmit) { Error($"'{TaskActionKeys.Resubmit}' is reserved for correction tasks."); continue; }
-                    if (!action.IsBuiltIn && string.IsNullOrWhiteSpace(action.Label)) Error($"Action '{action.Key}' in '{stage.Key}' needs a label.");
-                    // As before, approval cannot send the ticket to correction; reject and custom actions can.
-                    var approve = action.Key == TaskActionKeys.Approve;
-                    if (!DestinationValid(action.Destination, approve)) Error($"Invalid destination for action '{action.Key}' in '{stage.Key}'.");
+                    if (!DestinationValid(action.Destination)) Error($"Invalid destination for action '{action.Key}' in '{stage.Key}'.");
                     foreach (var rule in action.Rules ?? [])
                     {
                         if (rule is null) { Error("Null route rule."); continue; }
                         RuleConditionsValid(rule.Conditions);
-                        if (!DestinationValid(rule.Destination, approve)) Error($"Invalid conditional destination for action '{action.Key}' in '{stage.Key}'.");
+                        if (!DestinationValid(rule.Destination)) Error($"Invalid conditional destination for action '{action.Key}' in '{stage.Key}'.");
                     }
                 }
             }
@@ -131,25 +128,6 @@ public sealed class WorkflowConfigurationValidator : AbstractValidator<WorkflowS
                     if (!assignment.Members.Contains(rule.UserId)) Error("Rule assignee must be a candidate.");
                 }
             }
-            if (invalid) return;
-            // Check every stage, including ones entered only after rejection/correction. Approval
-            // edges must be acyclic; reject/correction edges are intentionally excluded from this walk.
-            // Memoizing completed stages also avoids repeatedly traversing shared approval branches.
-            var visiting = new HashSet<string>();
-            var complete = new HashSet<string>();
-            bool Terminates(string key)
-            {
-                if (complete.Contains(key)) return true;
-                if (!visiting.Add(key)) return false;
-                var stage = setup.Stages.Single(x => x.Key == key);
-                var terminates = (stage.ApproveRules ?? []).Select(x => x.Destination).Append(stage.ApproveTo!)
-                    .All(destination => destination.Kind != DestinationKind.Stage || Terminates(destination.StageKey!));
-                visiting.Remove(key);
-                if (terminates) complete.Add(key);
-                return terminates;
-            }
-            if (!setup.Stages.Where(stage => !parallelMembers.Contains(stage.Key)).All(stage => Terminates(stage.Key)))
-                Error("Approval cycles are not supported.");
         });
     }
 }

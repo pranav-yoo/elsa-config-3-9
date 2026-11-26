@@ -83,19 +83,19 @@ The list is part of the published snapshot: tasks are tagged when created, so ch
 
 ### Stage actions (task buttons)
 
-Each stage lists its task buttons in `actions`. `APPROVE` and `REJECT` are required; any other key is a custom action (UPPER_CASE, e.g. `REFER_UW`) with a `label`. Each action has a `destination` (`Stage`, `Correction`, `Approved`, `Rejected`; APPROVE cannot go to `Correction`) and optional `rules` that pick a conditional destination. REJECT always requires `data.reason`; set `"require_reason": true` to require it for a custom action. Custom actions are not allowed on parallel stages.
+Each stage lists its own task buttons in `actions`; there are no required or built-in keys. A key is UPPER_CASE (for example `APPROVE`, `REFER_UW`, `SEND_TO_LEGAL`) and `RESUBMIT` is reserved for correction tasks. Each action has an optional `label` (defaults to the key), a `destination` (`Stage`, `Correction`, `Approved` or `Rejected`), optional `rules` that pick a conditional destination (first match wins) and `"require_reason": true` when the user must send `data.reason`. Stages may route back and forth; there is no cycle check. The one exception is a parallel group (`parallel_with`): it means "the first approval continues, every rejection rejects", so each stage in the group offers exactly `APPROVE` and `REJECT` with identical destinations, and routing rules go on the entry stage only.
 
 ```json
 "actions": [
   { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Stage", "stage_key": "D" },
     "rules": [ { "conditions": [ { "attribute": "claimAmount", "operator": "GreaterThan", "value": 5000 } ],
                  "destination": { "kind": "Stage", "stage_key": "C" } } ] },
-  { "key": "REJECT", "label": "Reject", "destination": { "kind": "Stage", "stage_key": "A" } },
+  { "key": "REJECT", "label": "Reject", "destination": { "kind": "Stage", "stage_key": "A" }, "require_reason": true },
   { "key": "REFER_UW", "label": "Refer to UW", "destination": { "kind": "Stage", "stage_key": "UW" }, "require_reason": true }
 ]
 ```
 
-The task's `actions` (key + label) in `GET /elsa/api/user-tasks` and task detail are exactly these buttons; complete with `actionKey` set to one of them. Instance output `lastDecision` holds the chosen key. Older configurations with `approveTo` / `rejectTo` / `approveRules` are still read (converted to APPROVE/REJECT actions).
+The task's `actions` (key + label) in `GET /elsa/api/user-tasks` and task detail are exactly these buttons; complete with `actionKey` set to one of them. Instance output `lastDecision` holds the chosen key. Configurations that still use `approveTo` / `rejectTo` / `approveRules` are no longer accepted; send `actions`.
 
 ### Rule conditions (AND / OR)
 

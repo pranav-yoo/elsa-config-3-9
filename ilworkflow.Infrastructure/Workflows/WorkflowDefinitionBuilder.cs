@@ -38,7 +38,7 @@ public sealed class WorkflowDefinitionBuilder
             var correctionId = corrections.Keys.Any(x => x.Origin == origin) ? $"correction_{origin}_{destination.StageKey}" : "correction_" + origin;
             corrections[(origin, destination.StageKey!)] = correctionId;
             activities.Add(Review(correctionId, origin, correction: true));
-            Link(correctionId, nameof(TaskDecision.Resubmit), "stage_" + destination.StageKey);
+            Link(correctionId, StagePorts.Resubmit, "stage_" + destination.StageKey);
             return correctionId;
         }
         // An action's rules become a chain of FlowDecision nodes reading the persisted typed comparison
@@ -47,7 +47,7 @@ public sealed class WorkflowDefinitionBuilder
         string ActionEntry(StageDefinition stage, StageAction action)
         {
             var rules = action.Rules ?? [];
-            string RuleId(int i) => action.Key == TaskActionKeys.Approve ? $"rule_{stage.Key}_{i}" : $"rule_{stage.Key}_{action.Key}_{i}";
+            string RuleId(int i) => $"rule_{stage.Key}_{action.Key}_{i}";
             for (var i = 0; i < rules.Length; i++)
             {
                 var routeKey = JsonSerializer.Serialize(StageAction.RouteKey(stage.Key, action.Key, i));
@@ -69,21 +69,26 @@ public sealed class WorkflowDefinitionBuilder
                     branches = members.Prepend(stage.Key).Select(key => Review($"parallel-branch-{stage.Key}-{key}", key, parallel: true)).ToArray() });
             else
                 activities.Add(Review(id, stage.Key));
-            Link(id, nameof(TaskDecision.Reject), ActionEntry(stage, stage.Reject!));
-            Link(id, nameof(TaskDecision.Approve), ActionEntry(stage, stage.Approve!));
-            // Custom actions share one "Custom" port; the activity records the chosen key in lastAction
-            // and a FlowDecision chain sends it to that action's rules/destination.
-            var custom = stage.CustomActions;
-            for (var i = 0; i < custom.Length; i++)
+            var actions = stage.Actions!;
+            if (stage.ParallelWith is not null)
+            {
+                // The group decides: the first approval continues, all rejections reject (see ParallelTicketReview).
+                Link(id, StagePorts.Reject, ActionEntry(stage, actions.Single(x => x.Key == TaskActionKeys.Reject)));
+                Link(id, StagePorts.Approve, ActionEntry(stage, actions.Single(x => x.Key == TaskActionKeys.Approve)));
+                continue;
+            }
+            // Every action shares one "Action" port; TicketReview records the chosen key in lastAction and a
+            // FlowDecision chain sends it to that action's rules/destination.
+            for (var i = 0; i < actions.Length; i++)
             {
                 var nodeId = $"action_{stage.Key}_{i}";
-                if (i == 0) Link(id, nameof(TaskDecision.Custom), nodeId);
+                if (i == 0) Link(id, StagePorts.Action, nodeId);
                 activities.Add(new { id = nodeId, type = "Elsa.FlowDecision", version = 1,
                     condition = new { typeName = "Boolean", expression = new { type = "JavaScript",
-                        value = $"getVariable('lastAction') === {JsonSerializer.Serialize(custom[i].Key)}" } } });
-                Link(nodeId, "True", ActionEntry(stage, custom[i]));
+                        value = $"getVariable('lastAction') === {JsonSerializer.Serialize(actions[i].Key)}" } } });
+                Link(nodeId, "True", ActionEntry(stage, actions[i]));
                 // Unreachable for validated input (the form provider only accepts configured keys); fail closed.
-                Link(nodeId, "False", i + 1 < custom.Length ? $"action_{stage.Key}_{i + 1}" : "rejected");
+                Link(nodeId, "False", i + 1 < actions.Length ? $"action_{stage.Key}_{i + 1}" : "rejected");
             }
         }
         const string storageDriver = "Elsa.Workflows.WorkflowInstanceStorageDriver, Elsa.Workflows.Core";

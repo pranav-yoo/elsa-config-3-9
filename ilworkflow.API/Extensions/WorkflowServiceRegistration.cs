@@ -93,12 +93,10 @@ public static class WorkflowServiceRegistration
         }
         services.AddDbContext<ApplicationDbContext>(options => options.UseNpgsql(connectionString,
             provider => provider.MigrationsHistoryTable("__EFMigrationsHistory", "Application")));
-        // FluentValidation handles required fields; catalog-backed requests may omit inline attributes.
+        // FluentValidation handles required fields.
         services.AddControllers(options =>
         {
             options.SuppressImplicitRequiredAttributeForNonNullableReferenceTypes = true;
-            // Model-binding errors on /api/* use the same Result<T> body as controllers.
-            options.Filters.Add<ApiResponseFilter>();
         }).AddJsonOptions(options =>
         {
             options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter(allowIntegerValues: false));

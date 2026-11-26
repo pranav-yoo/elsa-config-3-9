@@ -51,7 +51,7 @@ Content-Type: application/json
         },
         "actions": [
           { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Stage", "stage_key": "B" } },
-          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Correction", "stage_key": "A" } }
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Correction", "stage_key": "A" }, "require_reason": true }
         ]
       },
       {
@@ -69,7 +69,7 @@ Content-Type: application/json
             "label": "Approve",
             "destination": { "kind": "Stage", "stage_key": "D" }
           },
-          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Stage", "stage_key": "A" } },
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Stage", "stage_key": "A" }, "require_reason": true },
           { "key": "REFER_UW", "label": "Refer to UW", "destination": { "kind": "Stage", "stage_key": "C" }, "require_reason": true }
         ]
       },
@@ -84,7 +84,7 @@ Content-Type: application/json
         },
         "actions": [
           { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Stage", "stage_key": "D" } },
-          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Rejected" } }
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Rejected" }, "require_reason": true }
         ]
       },
       {
@@ -98,7 +98,7 @@ Content-Type: application/json
         },
         "actions": [
           { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Approved" } },
-          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Correction", "stage_key": "D" } }
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Correction", "stage_key": "D" }, "require_reason": true }
         ]
       }
     ]
