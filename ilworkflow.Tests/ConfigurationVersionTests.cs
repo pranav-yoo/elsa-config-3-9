@@ -75,6 +75,10 @@ public sealed class ConfigurationVersionTests(ITestOutputHelper output)
         Assert.Equal(3L, (long)v1c["revision"]!);
         Assert.Equal(1, (int)v1c["workflowVersion"]!);
         Assert.Equal(v1c.ToJsonString(), (await api.GetAsync(Path(v1c))).ToJsonString());
+        Assert.Empty(v1c["configuration"]!["attributes"]!.AsArray()); // attributes are not configurable for now
+        // GET without a version returns the latest version.
+        Assert.Equal(v1c.ToJsonString(), (await api.GetAsync($"/api/workflow-configurations/{definitionId}")).ToJsonString());
+        await api.SendAsync("GET", "/api/workflow-configurations/no-such-definition", null, "admin", 404);
 
         // 4. Definition ID only while a draft is open: refused (one open draft per definition).
         await Save(definitionId, null, "Second draft", "admin", 409);
@@ -107,6 +111,9 @@ public sealed class ConfigurationVersionTests(ITestOutputHelper output)
                 Assert.Equal(2, (int)v2["workflowVersion"]!);
         Assert.Equal(1L, (long)v2["revision"]!);
         Assert.False((bool)v2["isPublished"]!);
+        var latest = await api.GetAsync($"/api/workflow-configurations/{definitionId}");
+        Assert.Equal(2, (int)latest["workflowVersion"]!);
+        Assert.Equal(1, (int)(await api.GetAsync(Path(v1c)))["workflowVersion"]!); // explicit version still wins
 
         // 9. Updating v2 never touches v1.
         var v2b = await Save(definitionId, (int)v2["workflowVersion"]!, "Second edited");

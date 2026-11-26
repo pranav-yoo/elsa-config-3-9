@@ -136,10 +136,6 @@ The native task command store can race after its initial operation lookup. Postg
 
 Native completion is asynchronous: 202 is acceptance, not proof the next task exists yet. Poll the next task/instance. Submission retries are not yet deduplicated; correlation IDs are searchable references, not idempotency keys. An outbox/idempotent submission mechanism, parallel approval thresholds, large payload/retention policies, multi-node runtime coordination, production identity-directory linking, attachments and notifications are later work.
 
-## Named definitions and active field master
+## Named definitions
 
-Use Attribute-Catalog.http to create master fields through POST /api/workflow-attributes before creating the workflow. Pass workflow_definition_id in the configuration POST to set the native Elsa family ID. Use the catalog key in a rule's conditions[].attribute (same orGroup = OR, otherwise AND). The adapter resolves the keys used by approval and assignment conditions against active catalog fields for the same definition, then FluentValidation checks every condition against that mapping.
-
-The snapshot preserves catalog types and constraints and marks each mapped field required. Draft saves and new-version creation refresh the mapping using the existing definition ID. Published snapshots and running instances retain their saved fields. Attribute keys are unique within a definition. Configuration and attribute controllers require the configurator permission and are unavailable in preview mode.
-
-AttributeDefinitionValidator is shared by master writes and configuration validation. WorkflowAttributeService implements the application port with EF Core; the API controller contains no persistence logic. ilworkflow.Tests/AttributeCatalogTests.cs exercises both field storage and native workflow execution/approval.
+Pass workflow_definition_id in the configuration POST to set the native Elsa family ID. Attributes are not configurable for now: the attribute catalog was removed and every snapshot stores an empty attributes list, so conditions[].attribute rules are rejected. Dropping the old table is migration 202611260001_DropWorkflowAttributes.

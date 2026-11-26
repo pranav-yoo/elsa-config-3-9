@@ -26,26 +26,8 @@ Content-Type: application/json
 }
 
 
-### Add the conditional attribute to the catalog
-# Reuse the existing field if this definition ID already has claimAmount. The workflow makes it mandatory.
-# @name createAmountField
-POST {{baseUrl}}/api/workflow-attributes
-Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
-Content-Type: application/json
-
-{
-  "definition_id": "{{definitionId}}",
-  "attribute": {
-    "key": "claimAmount",
-    "type": "Decimal",
-    "required": true,
-    "minimum": 0
-  }
-}
-
-
 ### Create configuration + native Elsa draft
-# No workflow_version, so this creates the definition and its first version. Omit workflow_definition_id too to get a generated one. Conditions are ordered; the first match wins. The API maps claimAmount from the catalog.
+# No workflow_version, so this creates the definition and its first version. Omit workflow_definition_id too to get a generated one. Attributes are not configurable for now: the API stores an empty attributes list.
 # @name createConfiguration
 POST {{baseUrl}}/api/workflow-configurations
 Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
@@ -85,15 +67,7 @@ Content-Type: application/json
           {
             "key": "APPROVE",
             "label": "Approve",
-            "destination": { "kind": "Stage", "stage_key": "D" },
-            "rules": [
-              {
-                "conditions": [
-                  { "attribute": "claimAmount", "operator": "GreaterThan", "value": 5000 }
-                ],
-                "destination": { "kind": "Stage", "stage_key": "C" }
-              }
-            ]
+            "destination": { "kind": "Stage", "stage_key": "D" }
           },
           { "key": "REJECT", "label": "Reject", "destination": { "kind": "Stage", "stage_key": "A" } },
           { "key": "REFER_UW", "label": "Refer to UW", "destination": { "kind": "Stage", "stage_key": "C" }, "require_reason": true }
@@ -103,17 +77,9 @@ Content-Type: application/json
         "key": "C",
         "title": "C High-value approval",
         "assignment": {
-          "policy": "Condition",
+          "policy": "Bucket",
           "members": [
             "{{claraId}}"
-          ],
-          "rules": [
-            {
-              "conditions": [
-                { "attribute": "claimAmount", "operator": "GreaterThan", "value": 5000 }
-              ],
-              "user_id": "{{claraId}}"
-            }
           ]
         },
         "actions": [

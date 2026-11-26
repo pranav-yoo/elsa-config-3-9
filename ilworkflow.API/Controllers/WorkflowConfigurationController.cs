@@ -17,9 +17,10 @@ public sealed class WorkflowConfigurationController(IWorkflowConfigurationServic
     public async Task<IActionResult> Save([FromBody] SaveConfigurationRequest request, CancellationToken ct) =>
         Ok(ToResponse(await service.SaveAsync(request, ct)));
 
-    /// <summary>Read one configuration version, its native Elsa identifiers and its internal revision.</summary>
+    /// <summary>Read one configuration version. Without a version number (<c>GET {workflow_definition_id}</c>) the latest version is returned.</summary>
+    [HttpGet("{workflowDefinitionId}")]
     [HttpGet("{workflowDefinitionId}/versions/{workflowVersion:int}")]
-    public async Task<IActionResult> Get(string workflowDefinitionId, int workflowVersion, CancellationToken ct) =>
+    public async Task<IActionResult> Get(string workflowDefinitionId, int? workflowVersion, CancellationToken ct) =>
         Ok(ToResponse(await service.GetAsync(workflowDefinitionId, workflowVersion, ct)));
 
     /// <summary>Run FluentValidation without changing or publishing the configuration.</summary>

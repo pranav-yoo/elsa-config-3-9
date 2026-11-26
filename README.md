@@ -6,7 +6,7 @@ Open `ilworkflow.slnx` in Visual Studio. Set **ilworkflow.API** as the startup p
 |---|---|
 | ilworkflow.API | Program.cs, service registration, controllers, middleware, Swagger and settings |
 | ilworkflow.Application | Ports (service interfaces), FluentValidation, task validation and assignment policies |
-| ilworkflow.Contracts | HTTP request and response models, one folder per module (`WorkflowConfigurations`, `WorkflowAttributes`, `Tasks`), each split into `Requests/` and `Responses/` |
+| ilworkflow.Contracts | HTTP request and response models, one folder per module (`WorkflowConfigurations`, `Tasks`), each split into `Requests/` and `Responses/` |
 | ilworkflow.Domain | Configuration entity, enums, value records and exact attribute comparisons |
 | ilworkflow.Infrastructure | PostgreSQL/EF, Elsa workflows/stores and identity adapters |
 
@@ -35,17 +35,12 @@ Run requests one at a time; use named responses within a file and copy marked ID
 1. [Authentication.http](Authentication.http): native local roles/users and login. Sample accounts use the configured- prefix and Password123! password. Inspect existing users/roles before creating records.
 2. [Workflow-Configuration.http](Workflow-Configuration.http): create/update draft, validate, publish and create next version.
 3. [Ticket-Workflow.http](Ticket-Workflow.http): internal submission, A/B/C/D approvals, rejection/correction, history and reassignment.
-4. [Attribute-Catalog.http](Attribute-Catalog.http): configure fields first, then create a workflow with your own `workflow_definition_id`.
 
-### Definition IDs and preconfigured attributes
+### Definition IDs and attributes
 
-`POST /api/workflow-attributes` creates a master field (missing/zero `id`) or updates one (positive `id`). Each row belongs to a `definitionId` and has `status: Active` or `Inactive`. `GET /api/workflow-attributes?definitionId=expense-claim-v1` lists that family's master records.
+Pass `workflow_definition_id` in `POST /api/workflow-configurations` to create Elsa's workflow with that exact ID. Sending an existing definition ID without `workflow_version` creates its next version, and returns 409 while another draft of that definition is still open.
 
-Pass `workflow_definition_id` in `POST /api/workflow-configurations` to create Elsa's workflow with that exact ID. Supply the attribute key in a rule's `conditions[].attribute` for an approval route or conditional assignment. The server maps those keys to active rows from `Application.WorkflowAttributes` under the same definition ID. Missing, inactive or other-definition references return 400. Each mapped field is mandatory. Sending an existing definition ID without `workflow_version` creates its next version, and returns 409 while another draft of that definition is still open.
-
-The configuration request contains the name, start stage and stages. The response includes the resolved attribute snapshot. Draft saves and new-version creation resolve the current conditional fields. Publishing freezes that snapshot for running instances. Workflows without conditions have an empty attribute snapshot. Send the mapped values in `input.attributes` at execution and in `data.attributes` when resubmitting corrections. Your application can store its section and subsection data separately.
-
-The attribute table and catalog-source flag are installed by migration `202611020001_WorkflowAttributes` on persistent startup. Run `dotnet test ilworkflow.Tests --filter AttributeCatalogTests` to verify the named-definition flow and native approval.
+Attributes are not configurable for now. The attribute catalog (`/api/workflow-attributes`) was removed, and every configuration is stored and returned with `"attributes": []`. Because no attribute exists, rule conditions are rejected with 400 and execution input must be `{ "attributes": {} }`. Migration `202611260001_DropWorkflowAttributes` drops the old table.
 
 `POST /api/workflow-configurations` is the only write endpoint. Configurations are addressed by `workflow_definition_id` and `workflow_version` (Elsa's integer version number, 1, 2, 3, ...):
 
@@ -55,7 +50,7 @@ The attribute table and catalog-source flag are installed by migration `20261102
 | `workflow_definition_id` + `configuration` | That definition if it does not exist yet, otherwise its **next version**. Returns 409 while a draft of it is still open. |
 | `workflow_definition_id` + `workflow_version` + `configuration` | Updates that draft version. Unknown version returns 404; a published version returns 409. |
 
-`workflow_version` without `workflow_definition_id` returns 400. The retired request fields `definition_id`, `id` and `expected_revision` also return 400 instead of being ignored. Read, validate and publish use `/api/workflow-configurations/{workflow_definition_id}/versions/{workflow_version}` (`GET`, `POST .../validate`, `POST .../publish`). There is no `next-draft` route.
+`workflow_version` without `workflow_definition_id` returns 400. The retired request fields `definition_id`, `id` and `expected_revision` also return 400 instead of being ignored. Read, validate and publish use `/api/workflow-configurations/{workflow_definition_id}/versions/{workflow_version}` (`GET`, `POST .../validate`, `POST .../publish`). `GET /api/workflow-configurations/{workflow_definition_id}` (no version) returns the latest version. There is no `next-draft` route.
 
 Responses return `workflow_definition_id`, `workflow_version`, `revision`, `is_published` and `configuration`. `revision` is an internal counter: it starts at 1 for each version, grows on every save and publish, and is never sent by clients. Published snapshots are immutable. Execution, tasks, instances and history use native Elsa APIs. No custom PUT or /api/tickets endpoint exists.
 
@@ -71,7 +66,7 @@ Review tasks expose the stage's `actions` (`APPROVE`, `REJECT` and any custom ke
 
 ### Response format (/api/*)
 
-All application endpoints (`/api/tasks`, `/api/workflow-configurations`, `/api/workflow-attributes`) return
+All application endpoints (`/api/tasks`, `/api/workflow-configurations`) return
 `{ "trace_id": "...", "messages": ["..."], "data": { ... } }`, for success and errors (errors put `code` and, for validation, `errors[]` in `data`).
 Elsa's native `/elsa/api/*` endpoints keep Elsa's format.
 All `/api/*` property and query names are snake_case (`definition_id`, `start_stage`, `stage_key`, `or_group`, `require_reason`, `expected_revision`, `workflow_instance_id`, …). Ticket attribute names (e.g. `claimAmount`) and enum values (`Stage`, `Bucket`, `APPROVE`) are unchanged.

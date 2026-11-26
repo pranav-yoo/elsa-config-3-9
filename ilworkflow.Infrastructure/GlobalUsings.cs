@@ -10,6 +10,4 @@ global using Microsoft.Extensions.Logging;
 global using IlWorkflow.Application.Workflows;
 global using IlWorkflow.Contracts.WorkflowConfigurations.Requests;
 global using IlWorkflow.Contracts.WorkflowConfigurations.Responses;
-global using IlWorkflow.Contracts.WorkflowAttributes.Requests;
-global using IlWorkflow.Contracts.WorkflowAttributes.Responses;
 global using IlWorkflow.Contracts.Tasks.Requests;

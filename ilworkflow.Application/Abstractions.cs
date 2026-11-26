@@ -26,14 +26,9 @@ public interface IApproverDirectory
 }
 public interface IWorkflowConfigurationService
 {
-    Task<WorkflowConfiguration> GetAsync(string workflowDefinitionId, int workflowVersion, CancellationToken ct);
+    /// <summary>A null version returns the latest version of the definition.</summary>
+    Task<WorkflowConfiguration> GetAsync(string workflowDefinitionId, int? workflowVersion, CancellationToken ct);
     Task<WorkflowConfiguration> SaveAsync(SaveConfigurationRequest request, CancellationToken ct);
     Task ValidateAsync(string workflowDefinitionId, int workflowVersion, CancellationToken ct);
     Task<WorkflowConfiguration> PublishAsync(string workflowDefinitionId, int workflowVersion, CancellationToken ct);
-}
-
-public interface IWorkflowAttributeService
-{
-    Task<WorkflowAttribute> SaveAsync(SaveWorkflowAttributeRequest request, CancellationToken ct);
-    Task<IReadOnlyList<WorkflowAttribute>> ListAsync(string definitionId, CancellationToken ct);
 }

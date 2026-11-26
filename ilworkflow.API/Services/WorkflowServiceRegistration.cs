@@ -112,7 +112,6 @@ public static class WorkflowServiceRegistration
         });
         services.AddScoped<WorkflowConfigurationValidator>();
         services.AddScoped<IWorkflowConfigurationService, WorkflowConfigurationService>();
-        services.AddScoped<IWorkflowAttributeService, WorkflowAttributeService>();
         services.AddSingleton<WorkflowDefinitionBuilder>();
         services.AddScoped<AssignmentResolver>();
         services.AddScoped<WorkflowAccessService>();

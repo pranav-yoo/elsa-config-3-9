@@ -21,13 +21,3 @@ public sealed class DefinitionIdValidator : AbstractValidator<string>
 {
     public DefinitionIdValidator() => RuleFor(x => x).NotEmpty().Matches("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$");
 }
-public sealed class SaveWorkflowAttributeValidator : AbstractValidator<SaveWorkflowAttributeRequest>
-{
-    public SaveWorkflowAttributeValidator()
-    {
-        RuleFor(x => x.Id).Must(id => id is null or >= 0);
-        RuleFor(x => x.DefinitionId).NotEmpty().SetValidator(new DefinitionIdValidator());
-        RuleFor(x => x.Status).IsInEnum();
-        RuleFor(x => x.Attribute).NotNull().SetValidator(new AttributeDefinitionValidator());
-    }
-}

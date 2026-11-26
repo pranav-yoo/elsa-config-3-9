@@ -16,9 +16,14 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
     IWorkflowDefinitionStore definitions, WorkflowDefinitionBuilder builder, WorkflowConfigurationValidator validator) : IWorkflowConfigurationService
 {
     public static string Hash(string source) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source)));
-    public async Task<WorkflowConfiguration> GetAsync(string workflowDefinitionId, int workflowVersion, CancellationToken ct) =>
-        await db.WorkflowConfigurations.SingleOrDefaultAsync(x => x.TenantId == "" && x.DefinitionId == workflowDefinitionId
-            && x.DefinitionVersion == workflowVersion, ct) ?? throw new ApiException(404, "Configuration version not found.");
+    public async Task<WorkflowConfiguration> GetAsync(string workflowDefinitionId, int? workflowVersion, CancellationToken ct)
+    {
+        var rows = db.WorkflowConfigurations.Where(x => x.TenantId == "" && x.DefinitionId == workflowDefinitionId);
+        var row = workflowVersion is { } version
+            ? await rows.SingleOrDefaultAsync(x => x.DefinitionVersion == version, ct)
+            : await rows.OrderByDescending(x => x.DefinitionVersion).FirstOrDefaultAsync(ct);
+        return row ?? throw new ApiException(404, "Configuration version not found.");
+    }
 
     /// <summary>
     /// One write path. A version number updates that draft; otherwise a new version is created. Without a definition ID the
@@ -37,7 +42,6 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
         var (row, definition, setup) = version is not null
             ? await OpenDraftAsync(definitionId!, version.Value, input, ct)
             : await CreateVersionAsync(definitionId, input, ct);
-        row.UsesAttributeCatalog = true;
         row.ConfigurationJson = ConfigurationJson.Write(setup);
         row.Ready = false;
         ApplySetup(definition, setup);
@@ -103,35 +107,12 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
 
     private async Task<WorkflowSetup> BuildSetupAsync(string definitionId, WorkflowSetupRequest input, CancellationToken ct)
     {
-        var setup = await MapConditionalAttributesAsync(definitionId, new WorkflowSetup(input.Name, [], input.StartStage, input.Stages, input.Supervisors), ct);
+        var setup = new WorkflowSetup(input.Name, [], input.StartStage, input.Stages, input.Supervisors);
         await validator.ValidateAndThrowAsync(setup, ct);
         return setup;
     }
 
     private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
-
-    private async Task<WorkflowSetup> MapConditionalAttributesAsync(string definitionId, WorkflowSetup setup, CancellationToken ct)
-    {
-        // Collect keys from both kinds of conditions. Leave malformed rules to FluentValidation.
-        var keys = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var stage in setup.Stages ?? [])
-        {
-            foreach (var action in stage?.Actions ?? [])
-                foreach (var rule in action?.Rules ?? [])
-                    foreach (var condition in rule?.Conditions ?? [])
-                        if (condition?.Attribute is { } key) keys.Add(key);
-            foreach (var rule in stage?.Assignment?.Rules ?? [])
-                foreach (var condition in rule?.Conditions ?? [])
-                    if (condition?.Attribute is { } key) keys.Add(key);
-        }
-
-        if (keys.Count == 0) return setup with { Attributes = [] };
-
-        var fields = await db.WorkflowAttributes.AsNoTracking()
-            .Where(x => x.DefinitionId == definitionId && x.Status == AttributeStatus.Active && keys.Contains(x.Key))
-            .OrderBy(x => x.Id).ToArrayAsync(ct);
-        return setup with { Attributes = fields.Select(x => x.ToDefinition() with { Required = true }).ToArray() };
-    }
 
     public async Task ValidateAsync(string workflowDefinitionId, int workflowVersion, CancellationToken ct) =>
         await validator.ValidateAndThrowAsync(ConfigurationJson.Read<WorkflowSetup>((await GetAsync(workflowDefinitionId, workflowVersion, ct)).ConfigurationJson), ct);

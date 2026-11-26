@@ -32,14 +32,6 @@ Content-Type: application/json
 
 { "username": "configured-alice", "password": "{{samplePassword}}" }
 
-### 2. Register the condition field so the task has submitted data
-# @name observerAmount
-POST {{baseUrl}}/api/workflow-attributes
-Authorization: Bearer {{observerAdmin.response.body.$.accessToken}}
-Content-Type: application/json
-
-{ "definition_id": "{{definitionId}}", "attribute": { "key": "claimAmount", "type": "Decimal" } }
-
 ### 3. Configure C to be visible to D's members
 # @name observerDraft
 POST {{baseUrl}}/api/workflow-configurations
@@ -56,11 +48,7 @@ Content-Type: application/json
         "key": "C", "title": "C - Clara review", "viewable_by_stages": ["D"],
         "assignment": { "policy": "Specific", "members": ["57cdff015b09629b"] },
         "actions": [
-          { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Stage", "stage_key": "D" },
-            "rules": [{
-              "conditions": [ { "attribute": "claimAmount", "operator": "GreaterThan", "value": 5000 } ],
-              "destination": { "kind": "Stage", "stage_key": "D" }
-            }] },
+          { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Stage", "stage_key": "D" }  },
           { "key": "REJECT", "label": "Reject", "destination": { "kind": "Rejected" } }
         ]
       },
@@ -87,7 +75,7 @@ POST {{baseUrl}}/elsa/api/workflow-definitions/{{definitionId}}/execute
 Authorization: Bearer {{observerAdmin.response.body.$.accessToken}}
 Content-Type: application/json
 
-{ "input": { "attributes": { "claimAmount": 6000 } } }
+{ "input": { "attributes": {} } }
 
 ### 6. Dan can already see C in Observed
 # @name observedTasks
