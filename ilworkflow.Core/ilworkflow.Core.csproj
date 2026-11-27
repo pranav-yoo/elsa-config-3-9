@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The business core: workflow model (Domain/), HTTP contracts (Contracts/), validation and service interfaces.
+    Keep this project free of Elsa, EF Core and ASP.NET: Infrastructure depends on Core, never the other way round.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="FluentValidation" Version="12.1.1" />
+  </ItemGroup>
+</Project>

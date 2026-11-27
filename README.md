@@ -8,13 +8,13 @@ user tasks (inbox items with buttons such as Approve / Reject).
 
 | Project | What it contains |
 |---|---|
-| ilworkflow.Domain | The workflow model (`WorkflowSetup`, `StageDefinition`, `StageAction`, ...) and the configuration entity. No dependencies. |
-| ilworkflow.Contracts | HTTP request/response records, one folder per module (`WorkflowConfigurations`, `Tasks`). |
-| ilworkflow.Application | FluentValidation validators, `AssignmentResolver`, service interfaces. No Elsa or EF Core. |
-| ilworkflow.Infrastructure | Everything Elsa and PostgreSQL: the flowchart builder, custom activities, task service, EF Core. |
+| ilworkflow.Core | The business core. `Domain/`: workflow model (`WorkflowSetup`, `StageDefinition`, `StageAction`, ...) and the configuration entity. `Contracts/`: HTTP request/response records. `Validation/`: FluentValidation rules. `Abstractions/`: service interfaces. `Workflows/AssignmentResolver`. No Elsa, EF Core or ASP.NET. |
+| ilworkflow.Infrastructure | Everything Elsa and PostgreSQL: the flowchart builder, custom activities, task service, EF Core, identity. |
 | ilworkflow.API | `Program.cs`, controllers, middleware, settings. |
 
-Dependencies point inward: API → Infrastructure → Application → Domain. See [architecture notes](docs/ARCHITECTURE.md) and the [developer guide](docs/DEVELOPER-GUIDE.md).
+Dependencies: API → Infrastructure → Core. Core references nothing but FluentValidation, so its rules can be unit-tested
+without a database or Elsa. Infrastructure implements Core's interfaces (for example `IApproverDirectory`).
+See [architecture notes](docs/ARCHITECTURE.md) and the [developer guide](docs/DEVELOPER-GUIDE.md).
 
 ## Start
 

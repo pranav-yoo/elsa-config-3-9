@@ -1,8 +1,6 @@
 <Solution>
   <Project Path="ilworkflow.API/ilworkflow.API.csproj" />
-  <Project Path="ilworkflow.Application/ilworkflow.Application.csproj" />
-  <Project Path="ilworkflow.Contracts/ilworkflow.Contracts.csproj" />
-  <Project Path="ilworkflow.Domain/ilworkflow.Domain.csproj" />
+  <Project Path="ilworkflow.Core/ilworkflow.Core.csproj" />
   <Project Path="ilworkflow.Infrastructure/ilworkflow.Infrastructure.csproj" />
   <Project Path="ilworkflow.Tests/ilworkflow.Tests.csproj" />
 </Solution>

@@ -9,8 +9,7 @@
     <UserSecretsId>ilworkflow-elsa-local</UserSecretsId>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../ilworkflow.Application/ilworkflow.Application.csproj" />
-    <ProjectReference Include="../ilworkflow.Contracts/ilworkflow.Contracts.csproj" />
+    <ProjectReference Include="../ilworkflow.Core/ilworkflow.Core.csproj" />
     <ProjectReference Include="../ilworkflow.Infrastructure/ilworkflow.Infrastructure.csproj" />
   </ItemGroup>
   <ItemGroup>

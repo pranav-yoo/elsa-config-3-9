@@ -65,7 +65,7 @@ public sealed class TicketReview : Activity
             Assignee = new(ctx => GetAssignment(Owner(ctx)).Assignee is { } id ? TicketState.User(id) : null),
             // Snapshot: keep the candidate list as it was when the task was created.
             MembershipResolutionMode = new(UserTaskMembershipResolutionMode.Snapshot),
-            Tags = new(ctx => Application.Common.ConfigurationJson.Read<string[]>(Owner(ctx).GetProperty<string>(ObserverTagsKey)!)),
+            Tags = new(ctx => Core.Common.ConfigurationJson.Read<string[]>(Owner(ctx).GetProperty<string>(ObserverTagsKey)!)),
             TaskData = new(ctx => TicketState.GetAttributes(Owner(ctx).WorkflowExecutionContext)),
             ActionDefinitions = new(ctx => GetButtons(Owner(ctx))),
             // TicketFormProvider validates the completion data. The key tells it which stage's rules apply.
@@ -76,7 +76,7 @@ public sealed class TicketReview : Activity
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
         var setupJson = ConfigurationJson.Get(context);
-        var setup = Application.Common.ConfigurationJson.Read<WorkflowSetup>(setupJson);
+        var setup = Core.Common.ConfigurationJson.Read<WorkflowSetup>(setupJson);
         var stage = setup.FindStage(StageKey.Get(context)) ?? throw new InvalidOperationException($"Unknown stage '{StageKey.Get(context)}'.");
         var correction = Correction.Get(context);
         var parallelBranch = ParallelBranch.Get(context);
@@ -90,12 +90,12 @@ public sealed class TicketReview : Activity
 
         context.SetProperty(SetupKey, setupJson);
         context.SetProperty(StageKeyKey, stage.Key);
-        context.SetProperty(AssignmentKey, Application.Common.ConfigurationJson.Write(assignment));
+        context.SetProperty(AssignmentKey, Core.Common.ConfigurationJson.Write(assignment));
         context.SetProperty(CorrectionKey, correction);
         context.SetProperty(ParallelBranchKey, parallelBranch);
         context.SetProperty(TitleKey, correction ? "Correct and resubmit: " + stage.Title : stage.Title);
         // Stored as JSON text: the property bag keeps plain values most reliably.
-        context.SetProperty(ObserverTagsKey, Application.Common.ConfigurationJson.Write(await ObserverTagsAsync(context, setup, stage, correction)));
+        context.SetProperty(ObserverTagsKey, Core.Common.ConfigurationJson.Write(await ObserverTagsAsync(context, setup, stage, correction)));
 
         // Parallel branches share one stage entry; ParallelTicketReview updates the stage for the whole group.
         if (!parallelBranch)
@@ -156,10 +156,10 @@ public sealed class TicketReview : Activity
         context.GetActivityExecutionContext().ParentActivityExecutionContext!;
 
     private static ResolvedAssignment GetAssignment(ActivityExecutionContext owner) =>
-        Application.Common.ConfigurationJson.Read<ResolvedAssignment>(owner.GetProperty<string>(AssignmentKey)!);
+        Core.Common.ConfigurationJson.Read<ResolvedAssignment>(owner.GetProperty<string>(AssignmentKey)!);
 
     private static StageDefinition GetStage(ActivityExecutionContext owner) =>
-        Application.Common.ConfigurationJson.Read<WorkflowSetup>(owner.GetProperty<string>(SetupKey)!).FindStage(owner.GetProperty<string>(StageKeyKey)!)!;
+        Core.Common.ConfigurationJson.Read<WorkflowSetup>(owner.GetProperty<string>(SetupKey)!).FindStage(owner.GetProperty<string>(StageKeyKey)!)!;
 
     private static UserTaskActionDefinition[] GetButtons(ActivityExecutionContext owner) =>
         owner.GetProperty<bool>(CorrectionKey)
