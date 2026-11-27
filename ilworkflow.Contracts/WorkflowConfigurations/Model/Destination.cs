@@ -1,4 +1,4 @@
-namespace IlWorkflow.Core.WorkflowConfigurations.Model;
+namespace IlWorkflow.Contracts.WorkflowConfigurations.Model;
 
 /// <summary>
 /// Where a ticket goes after a button is pressed.

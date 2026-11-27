@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace IlWorkflow.Core.WorkflowConfigurations.Requests;
+namespace IlWorkflow.Contracts.WorkflowConfigurations.Requests;
 
 /// <summary>
 /// One save contract for every configuration write. Unmapped members are rejected so a retired field such as

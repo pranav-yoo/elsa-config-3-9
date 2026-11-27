@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The public shape of the API: request/response records and the workflow model that appears inside them
+    (WorkflowSetup, StageDefinition, StageAction, ...), grouped by feature.
+    No dependencies at all. Core and Infrastructure reference this project, never the other way round.
+  -->
+</Project>

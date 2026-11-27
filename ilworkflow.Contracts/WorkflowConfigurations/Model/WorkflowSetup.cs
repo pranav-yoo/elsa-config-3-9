@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace IlWorkflow.Core.WorkflowConfigurations.Model;
+namespace IlWorkflow.Contracts.WorkflowConfigurations.Model;
 
 /// <summary>
 /// A complete approval workflow: its name, the first stage and every stage.

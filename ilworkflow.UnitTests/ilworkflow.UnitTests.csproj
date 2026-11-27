@@ -10,6 +10,7 @@
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="../ilworkflow.Contracts/ilworkflow.Contracts.csproj" />
     <ProjectReference Include="../ilworkflow.Core/ilworkflow.Core.csproj" />
     <ProjectReference Include="../ilworkflow.Infrastructure/ilworkflow.Infrastructure.csproj" />
   </ItemGroup>
@@ -20,7 +21,8 @@
     <Using Include="IlWorkflow.Core.Tasks.Validators" />
     <Using Include="IlWorkflow.Core.Tickets" />
     <Using Include="IlWorkflow.Core.WorkflowConfigurations" />
-    <Using Include="IlWorkflow.Core.WorkflowConfigurations.Model" />
+    <Using Include="IlWorkflow.Contracts.WorkflowConfigurations.Model" />
+    <Using Include="IlWorkflow.Contracts.Tasks.Requests" />
     <Using Include="IlWorkflow.Core.WorkflowConfigurations.Validators" />
   </ItemGroup>
 </Project>

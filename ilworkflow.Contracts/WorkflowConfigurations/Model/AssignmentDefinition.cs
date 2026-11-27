@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace IlWorkflow.Core.WorkflowConfigurations.Model;
+namespace IlWorkflow.Contracts.WorkflowConfigurations.Model;
 
 /// <summary>Who receives a stage's task.</summary>
 /// <param name="Policy">Bucket: every member sees it and one claims it. Specific: one member owns it.</param>

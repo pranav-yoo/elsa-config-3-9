@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace IlWorkflow.Core.Common;
+namespace IlWorkflow.Contracts.Common;
 
 /// <summary>Standard response body for every /api/* endpoint: { trace_id, status_code, messages, data }.</summary>
 public class Result<T>

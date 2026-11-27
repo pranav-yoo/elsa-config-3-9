@@ -5,6 +5,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../ilworkflow.Core/ilworkflow.Core.csproj" />
+    <ProjectReference Include="../ilworkflow.Contracts/ilworkflow.Contracts.csproj" />
     <ProjectReference Include="../ilworkflow.Infrastructure/ilworkflow.Infrastructure.csproj" />
   </ItemGroup>
   <ItemGroup>

@@ -1,4 +1,4 @@
-namespace IlWorkflow.Core.WorkflowConfigurations.Model;
+namespace IlWorkflow.Contracts.WorkflowConfigurations.Model;
 
 /// <summary>
 /// Action keys that have a special meaning.

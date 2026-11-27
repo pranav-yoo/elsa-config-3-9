@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace IlWorkflow.Core.WorkflowConfigurations.Model;
+namespace IlWorkflow.Contracts.WorkflowConfigurations.Model;
 
 /// <summary>One button on a task, for example APPROVE, REJECT or REFER_UW.</summary>
 /// <param name="Key">UPPER_CASE key sent by the client when the button is pressed.</param>

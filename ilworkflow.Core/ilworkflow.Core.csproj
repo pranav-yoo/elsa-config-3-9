@@ -5,6 +5,9 @@
     Keep this project free of Elsa, EF Core and ASP.NET: Infrastructure depends on Core, never the other way round.
   -->
   <ItemGroup>
+    <ProjectReference Include="../ilworkflow.Contracts/ilworkflow.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="FluentValidation" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
   </ItemGroup>

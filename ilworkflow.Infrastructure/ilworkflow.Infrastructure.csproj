@@ -12,5 +12,6 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../ilworkflow.Core/ilworkflow.Core.csproj" />
+    <ProjectReference Include="../ilworkflow.Contracts/ilworkflow.Contracts.csproj" />
   </ItemGroup>
 </Project>

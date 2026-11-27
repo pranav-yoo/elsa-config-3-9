@@ -8,7 +8,8 @@ user tasks (inbox items with buttons such as Approve / Reject).
 
 | Project | What it contains |
 |---|---|
-| ilworkflow.Core | The business core, one folder per feature. No Elsa, EF Core or ASP.NET. |
+| ilworkflow.Contracts | The public shape of the API: request/response records plus the workflow model inside them (`WorkflowSetup`, `StageDefinition`, `StageAction`, ...). No dependencies. |
+| ilworkflow.Core | The business rules, one folder per feature: validators, `AssignmentResolver`, service interfaces. No Elsa, EF Core or ASP.NET. |
 | ilworkflow.Infrastructure | Everything Elsa and PostgreSQL: flowchart builder, custom activities, task service, EF Core, identity. |
 | ilworkflow.API | `Program.cs`, controllers, middleware, settings. |
 | ilworkflow.UnitTests | Fast tests (no server, no database): `dotnet test ilworkflow.UnitTests`. |
@@ -17,12 +18,15 @@ user tasks (inbox items with buttons such as Approve / Reject).
 ### Where things live
 
 ```
+ilworkflow.Contracts/
+  WorkflowConfigurations/   Model/ (WorkflowSetup, StageDefinition, StageAction, ...), Requests/, Responses/
+  Tasks/Requests/
+  Common/                   Result<T>
 ilworkflow.Core/
-  WorkflowConfigurations/   Model/ (WorkflowSetup, StageDefinition, StageAction, ...), Requests/, Responses/,
-                            Validators/, WorkflowConfiguration (database row), IWorkflowConfigurationService
-  Tasks/                    Requests/, Validators/ (TaskDecisionValidator), AssignmentResolver, IApproverDirectory
+  WorkflowConfigurations/   Validators/, WorkflowConfiguration (database row), IWorkflowConfigurationService
+  Tasks/                    Validators/ (TaskDecisionValidator), AssignmentResolver, IApproverDirectory
   Tickets/                  TicketOutcome, Validators/ (ExecuteRequestValidator)
-  Common/                   Result<T>, ApiException, ConfigurationJson
+  Common/                   ApiException, ConfigurationJson
   DependencyInjection.cs    AddCore()
 ilworkflow.Infrastructure/
   Workflows/                WorkflowDefinitionBuilder (setup -> Elsa flowchart), Activities/, TicketFormProvider
@@ -35,7 +39,7 @@ ilworkflow.API/
   Controllers/ Middleware/ Extensions/ (AddApi)
 ```
 
-Dependencies: API → Infrastructure → Core. Core only references FluentValidation, so its rules are unit-tested without Elsa or a database;
+Dependencies: API → Infrastructure → Core → Contracts (API also references Core and Contracts). Contracts has no dependencies and Core only adds FluentValidation, so its rules are unit-tested without Elsa or a database;
 Infrastructure implements Core's interfaces (for example `IApproverDirectory`). Package versions live in `Directory.Packages.props`
 (all Elsa packages on 3.9.0); shared project settings in `Directory.Build.props`.
 See [architecture notes](docs/ARCHITECTURE.md) and the [developer guide](docs/DEVELOPER-GUIDE.md).

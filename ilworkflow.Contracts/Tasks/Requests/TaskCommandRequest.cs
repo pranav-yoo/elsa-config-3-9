@@ -1,4 +1,4 @@
-namespace IlWorkflow.Core.Tasks.Requests;
+namespace IlWorkflow.Contracts.Tasks.Requests;
 
 /// <summary>
 /// Body of claim and release. ExpectedRevision and OperationId are optional: omitted values use the task's current
