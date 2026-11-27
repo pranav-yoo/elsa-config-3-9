@@ -1,4 +1,6 @@
 using Elsa.Extensions;
+using IlWorkflow.Core;
+using IlWorkflow.Infrastructure;
 using IlWorkflow.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -20,7 +22,10 @@ if (!swaggerPreview && (string.IsNullOrWhiteSpace(signingKey) || signingKey.Leng
 if (!swaggerPreview && builder.Environment.IsDevelopment() && string.IsNullOrWhiteSpace(configuration["Identity:Admin:Password"]))
     throw new InvalidOperationException("Set Identity:Admin:Password using dotnet user-secrets.");
 
-builder.Services.AddWorkflowServices(configuration, builder.Environment, swaggerPreview, useConfigurationIdentity);
+// Each layer registers its own services.
+builder.Services.AddCore();
+builder.Services.AddInfrastructure(configuration, builder.Environment, swaggerPreview, useConfigurationIdentity);
+builder.Services.AddApi();
 
 builder.Logging.AddSimpleConsole(options =>
 {

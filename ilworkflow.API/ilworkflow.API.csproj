@@ -1,10 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-  </PropertyGroup>
-  <PropertyGroup>
     <AssemblyName>ilworkflow.API.Host</AssemblyName>
     <UserSecretsId>ilworkflow-elsa-local</UserSecretsId>
   </PropertyGroup>

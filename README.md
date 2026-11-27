@@ -8,12 +8,36 @@ user tasks (inbox items with buttons such as Approve / Reject).
 
 | Project | What it contains |
 |---|---|
-| ilworkflow.Core | The business core. `Domain/`: workflow model (`WorkflowSetup`, `StageDefinition`, `StageAction`, ...) and the configuration entity. `Contracts/`: HTTP request/response records. `Validation/`: FluentValidation rules. `Abstractions/`: service interfaces. `Workflows/AssignmentResolver`. No Elsa, EF Core or ASP.NET. |
-| ilworkflow.Infrastructure | Everything Elsa and PostgreSQL: the flowchart builder, custom activities, task service, EF Core, identity. |
+| ilworkflow.Core | The business core, one folder per feature. No Elsa, EF Core or ASP.NET. |
+| ilworkflow.Infrastructure | Everything Elsa and PostgreSQL: flowchart builder, custom activities, task service, EF Core, identity. |
 | ilworkflow.API | `Program.cs`, controllers, middleware, settings. |
+| ilworkflow.UnitTests | Fast tests (no server, no database): `dotnet test ilworkflow.UnitTests`. |
+| ilworkflow.Tests | Live API tests (need a running API and PostgreSQL; currently outdated, see Verify). |
 
-Dependencies: API → Infrastructure → Core. Core references nothing but FluentValidation, so its rules can be unit-tested
-without a database or Elsa. Infrastructure implements Core's interfaces (for example `IApproverDirectory`).
+### Where things live
+
+```
+ilworkflow.Core/
+  WorkflowConfigurations/   Model/ (WorkflowSetup, StageDefinition, StageAction, ...), Requests/, Responses/,
+                            Validators/, WorkflowConfiguration (database row), IWorkflowConfigurationService
+  Tasks/                    Requests/, Validators/ (TaskDecisionValidator), AssignmentResolver, IApproverDirectory
+  Tickets/                  TicketOutcome, Validators/ (ExecuteRequestValidator)
+  Common/                   Result<T>, ApiException, ConfigurationJson
+  DependencyInjection.cs    AddCore()
+ilworkflow.Infrastructure/
+  Workflows/                WorkflowDefinitionBuilder (setup -> Elsa flowchart), Activities/, TicketFormProvider
+  Configuration/            WorkflowConfigurationService (save / validate / publish)
+  Tasks/                    TaskService, ObservedUserTasks
+  Persistence/              ApplicationDbContext, Configurations/ (table mapping), Migrations/, UserTasks/
+  Authentication/ Authorization/ Identity/
+  DependencyInjection.cs    AddInfrastructure(): Elsa engine, database, task services, identity
+ilworkflow.API/
+  Controllers/ Middleware/ Extensions/ (AddApi)
+```
+
+Dependencies: API → Infrastructure → Core. Core only references FluentValidation, so its rules are unit-tested without Elsa or a database;
+Infrastructure implements Core's interfaces (for example `IApproverDirectory`). Package versions live in `Directory.Packages.props`
+(all Elsa packages on 3.9.0); shared project settings in `Directory.Build.props`.
 See [architecture notes](docs/ARCHITECTURE.md) and the [developer guide](docs/DEVELOPER-GUIDE.md).
 
 ## Start
@@ -135,6 +159,7 @@ parallel group, observed and supervised lists):
 python Tests/smoke_workflow.py --attributes
 ```
 
+`dotnet test ilworkflow.UnitTests` runs 40 fast tests for the validators, `AssignmentResolver` and the flowchart builder.
 The C# live tests in `ilworkflow.Tests` still target the removed conditional-routing feature and need updating before use.
 
 ## Not included yet

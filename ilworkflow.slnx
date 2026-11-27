@@ -3,4 +3,5 @@
   <Project Path="ilworkflow.Core/ilworkflow.Core.csproj" />
   <Project Path="ilworkflow.Infrastructure/ilworkflow.Infrastructure.csproj" />
   <Project Path="ilworkflow.Tests/ilworkflow.Tests.csproj" />
+  <Project Path="ilworkflow.UnitTests/ilworkflow.UnitTests.csproj" />
 </Solution>

@@ -1,5 +1,11 @@
-global using IlWorkflow.Core.Abstractions;
-global using IlWorkflow.Core.Domain.Configuration;
-global using IlWorkflow.Core.Domain.Entities;
-global using IlWorkflow.Core.Domain.Enums;
-global using IlWorkflow.Core.Contracts.WorkflowConfigurations.Requests;
+global using IlWorkflow.Core.Common;
+global using IlWorkflow.Core.Tasks;
+global using IlWorkflow.Core.Tasks.Requests;
+global using IlWorkflow.Core.Tasks.Validators;
+global using IlWorkflow.Core.Tickets;
+global using IlWorkflow.Core.Tickets.Validators;
+global using IlWorkflow.Core.WorkflowConfigurations;
+global using IlWorkflow.Core.WorkflowConfigurations.Model;
+global using IlWorkflow.Core.WorkflowConfigurations.Requests;
+global using IlWorkflow.Core.WorkflowConfigurations.Responses;
+global using IlWorkflow.Core.WorkflowConfigurations.Validators;
