@@ -1,4 +1,7 @@
 namespace IlWorkflow.Contracts.WorkflowConfigurations.Requests;
 
-/// <summary>The workflow itself: name, start stage and stages. Attributes are not configurable for now, so none are sent.</summary>
-public sealed record WorkflowSetupRequest(string Name, string StartStage, StageDefinition[] Stages, string[]? Supervisors = null);
+/// <summary>The "configuration" object of a save request: name, first stage, stages and optional supervisors.</summary>
+public sealed record WorkflowSetupRequest(string Name, string StartStage, StageDefinition[] Stages, string[]? Supervisors = null)
+{
+    public WorkflowSetup ToSetup() => new(Name, StartStage, Stages, Supervisors);
+}

@@ -1,5 +1,5 @@
 using IlWorkflow.Infrastructure.Persistence;
-using IlWorkflow.Api.Workflows;
+using IlWorkflow.Infrastructure.Workflows;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json.Serialization;
 using Elsa.Extensions;

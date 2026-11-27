@@ -1,3 +1,3 @@
 namespace IlWorkflow.Domain.Enums;
 
-public enum AssignmentPolicy { Bucket, Specific, Condition }
+public enum AssignmentPolicy { Bucket, Specific }

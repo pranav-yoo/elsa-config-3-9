@@ -1,141 +1,171 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Elsa.Extensions;
 using Elsa.Expressions.Models;
+using Elsa.Extensions;
 using Elsa.UserTasks.Activities;
 using Elsa.UserTasks.Models;
 using Elsa.Workflows;
-using Elsa.Workflows.Attributes;
 using Elsa.Workflows.Activities.Flowchart.Attributes;
+using Elsa.Workflows.Attributes;
 using Elsa.Workflows.Models;
-using FluentValidation;
 using UserTask = Elsa.UserTasks.Activities.UserTask;
-using ConfigJson = IlWorkflow.Application.Common.ConfigurationJson;
 
-namespace IlWorkflow.Api.Workflows;
+namespace IlWorkflow.Infrastructure.Workflows;
 
-[Activity("Tickets", "Tickets", "Schedules one native approval or correction task.")]
-[FlowNode(StagePorts.Action, StagePorts.Resubmit)]
+/// <summary>
+/// One stage visit: creates a native Elsa <see cref="UserTask"/> and waits until a user completes it.
+///
+/// How it works:
+/// 1. <see cref="ExecuteAsync"/> decides who gets the task and saves that on this activity's context.
+/// 2. It schedules the child <see cref="Review"/> user task. The workflow now SUSPENDS and is saved to the database.
+/// 3. When a user completes the task, Elsa resumes the workflow and calls <see cref="OnReviewCompletedAsync"/>.
+/// 4. The activity finishes with an outcome named after the pressed button (for example "APPROVE"),
+///    and the flowchart follows the connection with that name.
+///
+/// The same activity is used for correction tasks (Correction = true): the requester gets a RESUBMIT button.
+/// </summary>
+[Activity("Tickets", "Tickets", "Creates one approval or correction task and waits for the decision.")]
+[FlowNode(StagePorts.Resubmit)]
 public sealed class TicketReview : Activity
 {
+    public const string TaskType = "configured-ticket";
+
+    // Values saved on this activity's context in ExecuteAsync and read back by the user task (keys of the property bag).
+    private const string SetupKey = "schema";
+    private const string StageKeyKey = "stageKey";
+    private const string AssignmentKey = "assignment";
+    private const string CorrectionKey = "correction";
+    private const string ParallelBranchKey = "parallelBranch";
+    private const string TitleKey = "title";
+    private const string ObserverTagsKey = "observerTags";
+
+    /// <summary>The setup snapshot this workflow version was built from (never the latest editable draft).</summary>
     [Input] public Input<string> ConfigurationJson { get; set; } = null!;
     [Input] public Input<string> StageKey { get; set; } = null!;
+    /// <summary>True for a "correct and resubmit" task for the requester.</summary>
     [Input] public Input<bool> Correction { get; set; } = new(false);
+    /// <summary>True when this task is one branch of a <see cref="ParallelTicketReview"/>.</summary>
     [Input] public Input<bool> ParallelBranch { get; set; } = new(false);
+
     [JsonIgnore, Port("Review")] public UserTask Review { get; set; }
-    private static ActivityExecutionContext Parent(ExpressionExecutionContext context) => context.GetActivityExecutionContext().ParentActivityExecutionContext!;
-    // The pinned snapshot + stage key stored on this visit; never the latest editable configuration.
-    // Visits recorded before stage actions existed have no "stageKey" property: return null.
-    private static StageDefinition? StageOf(ActivityExecutionContext context) =>
-        context.GetProperty<string>("stageKey") is { } key && context.GetProperty<string>("schema") is { } schema
-            ? ConfigJson.Read<WorkflowSetup>(schema).Stages.FirstOrDefault(x => x.Key == key)
-            : null;
-    private static UserTaskActionDefinition[] ActionsOf(ActivityExecutionContext context) =>
-        StageOf(context)?.Actions?.Select(x => new UserTaskActionDefinition(x.Key, x.DisplayLabel)).ToArray() ?? [];
-    private static ResolvedAssignment Assignment(ExpressionExecutionContext context) => ConfigJson.Read<ResolvedAssignment>(Parent(context).GetProperty<string>("assignment")!);
+
     public TicketReview()
     {
+        // These lambdas run when Elsa creates the task. "Owner(ctx)" is this TicketReview's context,
+        // where ExecuteAsync stored the values.
         Review = new UserTask
         {
             Id = "review",
-            Title = new(ctx => Parent(ctx).GetProperty<string>("title")!),
-            Summary = new(ctx => Assignment(ctx).Blocked ? "Assignment blocked. Supervisor reassignment required." : "Review this request."),
-            TaskType = new(ctx => Parent(ctx).GetProperty<bool>("parallelBranch") ? ParallelTicketReview.TaskType : "configured-ticket"),
-            Tags = new(ctx => Parent(ctx).GetProperty<string>("observerTags") is { } tags
-                ? ConfigJson.Read<string[]>(tags) : []),
-            Reference = new(ctx => Parent(ctx).WorkflowExecutionContext.CorrelationId),
-            Requester = new(ctx => TicketState.User(TicketState.Requester(Parent(ctx).WorkflowExecutionContext))),
-            CandidateUsers = new(ctx => Assignment(ctx).Candidates.Select(TicketState.User).ToArray()),
-            Assignee = new(ctx => Assignment(ctx).Assignee is { } id ? TicketState.User(id) : null),
+            TaskType = new(ctx => Owner(ctx).GetProperty<bool>(ParallelBranchKey) ? ParallelTicketReview.TaskType : TaskType),
+            Title = new(ctx => Owner(ctx).GetProperty<string>(TitleKey)!),
+            Summary = new(ctx => GetAssignment(Owner(ctx)).Blocked ? "Assignment blocked. Supervisor reassignment required." : "Review this request."),
+            Reference = new(ctx => Owner(ctx).WorkflowExecutionContext.CorrelationId),
+            Requester = new(ctx => TicketState.User(TicketState.GetRequester(Owner(ctx).WorkflowExecutionContext))),
+            CandidateUsers = new(ctx => GetAssignment(Owner(ctx)).Candidates.Select(TicketState.User).ToArray()),
+            Assignee = new(ctx => GetAssignment(Owner(ctx)).Assignee is { } id ? TicketState.User(id) : null),
+            // Snapshot: keep the candidate list as it was when the task was created.
             MembershipResolutionMode = new(UserTaskMembershipResolutionMode.Snapshot),
-            TaskData = new(ctx => JsonSerializer.SerializeToElement(TicketState.Attributes(Parent(ctx).WorkflowExecutionContext))),
-            // Typed actions avoid nested Input<string> deserialization inside a literal JSON array in Elsa 3.9.
-            // Review tasks show the stage's configured actions (APPROVE, REJECT, then custom ones).
-            ActionDefinitions = new(ctx => Parent(ctx).GetProperty<bool>("correction")
-                ? [new UserTaskActionDefinition(TaskActionKeys.Resubmit, "Resubmit")]
-                : ActionsOf(Parent(ctx))),
-            // The form key carries the stage so completion validation knows which actions this task offers.
-            Form = new(ctx => new UserTaskFormReference("configured-ticket",
-                Parent(ctx).GetProperty<bool>("correction") ? "correction" : "review:" + Parent(ctx).GetProperty<string>("stageKey"),
-                Parent(ctx).GetProperty<string>("schema")))
+            Tags = new(ctx => Application.Common.ConfigurationJson.Read<string[]>(Owner(ctx).GetProperty<string>(ObserverTagsKey)!)),
+            TaskData = new(ctx => TicketState.GetAttributes(Owner(ctx).WorkflowExecutionContext)),
+            ActionDefinitions = new(ctx => GetButtons(Owner(ctx))),
+            // TicketFormProvider validates the completion data. The key tells it which stage's rules apply.
+            Form = new(ctx => new UserTaskFormReference(TicketFormProvider.ProviderName, FormKey(Owner(ctx)), Owner(ctx).GetProperty<string>(SetupKey)))
         };
     }
+
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
-        var schema = ConfigurationJson.Get(context);
-        var setup = ConfigJson.Read<WorkflowSetup>(schema);
-        var stage = setup.Stages.Single(x => x.Key == StageKey.Get(context));
+        var setupJson = ConfigurationJson.Get(context);
+        var setup = Application.Common.ConfigurationJson.Read<WorkflowSetup>(setupJson);
+        var stage = setup.FindStage(StageKey.Get(context)) ?? throw new InvalidOperationException($"Unknown stage '{StageKey.Get(context)}'.");
         var correction = Correction.Get(context);
         var parallelBranch = ParallelBranch.Get(context);
-        // Assignment is resolved once per stage visit. CandidateUsers + Snapshot preserve that list
-        // while Elsa owns the task's subsequent claim, assignee, revision and completion history.
+        var workflow = context.WorkflowExecutionContext;
+
+        // A correction always goes back to the requester. A review goes to the stage's members.
+        var requester = TicketState.GetRequester(workflow);
         var assignment = correction
-            ? new ResolvedAssignment([TicketState.Requester(context.WorkflowExecutionContext)], TicketState.Requester(context.WorkflowExecutionContext), false)
-            : await context.GetRequiredService<AssignmentResolver>().ResolveAsync(stage.Assignment, TicketState.Attributes(context.WorkflowExecutionContext), context.CancellationToken);
-        // Only this active activity's callback needs these properties. Final ticket data belongs in
-        // workflow output instead; completed activity contexts may be removed by the runtime.
-        context.SetProperty("assignment", ConfigJson.Write(assignment));
-        context.SetProperty("schema", schema);
-        context.SetProperty("stageKey", stage.Key);
-        context.SetProperty("correction", correction);
-        context.SetProperty("parallelBranch", parallelBranch);
-        context.SetProperty("title", correction ? "Correct and resubmit: " + stage.Title : stage.Title);
-        var tags = new List<string>();
-        var users = context.GetRequiredService<IApproverDirectory>();
-        if (!correction && stage.ViewableByStages is { Length: > 0 } viewerStages)
+            ? new ResolvedAssignment([requester], requester, false)
+            : await context.GetRequiredService<AssignmentResolver>().ResolveAsync(stage.Assignment, context.CancellationToken);
+
+        context.SetProperty(SetupKey, setupJson);
+        context.SetProperty(StageKeyKey, stage.Key);
+        context.SetProperty(AssignmentKey, Application.Common.ConfigurationJson.Write(assignment));
+        context.SetProperty(CorrectionKey, correction);
+        context.SetProperty(ParallelBranchKey, parallelBranch);
+        context.SetProperty(TitleKey, correction ? "Correct and resubmit: " + stage.Title : stage.Title);
+        // Stored as JSON text: the property bag keeps plain values most reliably.
+        context.SetProperty(ObserverTagsKey, Application.Common.ConfigurationJson.Write(await ObserverTagsAsync(context, setup, stage, correction)));
+
+        // Parallel branches share one stage entry; ParallelTicketReview updates the stage for the whole group.
+        if (!parallelBranch)
         {
-            // These members may observe before their own stage exists. Snapshot their eligibility
-            // at task creation without changing the native candidate or assignee lists.
-            foreach (var member in setup.Stages.Where(other => viewerStages.Contains(other.Key))
-                .SelectMany(other => other.Assignment.Members).Distinct(StringComparer.Ordinal))
-                if (await users.HasRoleAsync(member, "Approver", context.CancellationToken))
-                    tags.Add(ObservedTaskAccess.TagFor(TicketState.User(member)));
+            workflow.Output[TicketState.CurrentStage] = stage.Key;
+            TicketState.SetOutcome(workflow, correction ? TicketOutcome.Returned : TicketOutcome.InReview);
         }
-        // Workflow supervisors see (and may reassign) every task of this workflow, including corrections.
+
+        await context.ScheduleActivityAsync(Review, OnReviewCompletedAsync);
+    }
+
+    private async ValueTask OnReviewCompletedAsync(ActivityCompletedContext completed)
+    {
+        var context = completed.TargetContext;
+        var workflow = context.WorkflowExecutionContext;
+        var stimulus = context.GetWorkflowInput<UserTaskStimulus>(UserTask.InputKey);
+
+        if (context.GetProperty<bool>(CorrectionKey))
+        {
+            // TicketFormProvider has already checked the data shape.
+            var attributes = stimulus.CompletionData!.Value.GetProperty(TicketState.Attributes).Clone();
+            TicketState.AddAttributeRevision(workflow, attributes);
+            await context.CompleteActivityWithOutcomesAsync(StagePorts.Resubmit);
+            return;
+        }
+
+        // Use the key exactly as configured, whatever casing the client sent.
+        var action = GetStage(context).Actions!.First(x => string.Equals(x.Key, stimulus.ActionKey, StringComparison.OrdinalIgnoreCase));
+        if (!context.GetProperty<bool>(ParallelBranchKey))
+            workflow.Output[TicketState.LastDecision] = action.Key;
+        await context.CompleteActivityWithOutcomesAsync(action.Key);
+    }
+
+    /// <summary>Members of the stages in ViewableByStages may read this task. Elsa stores that as task tags.</summary>
+    private static async Task<string[]> ObserverTagsAsync(ActivityExecutionContext context, WorkflowSetup setup, StageDefinition stage, bool correction)
+    {
+        var users = context.GetRequiredService<IApproverDirectory>();
+        var tags = new List<string>();
+
+        if (!correction)
+        {
+            var viewerStages = stage.ViewableByStages ?? [];
+            var viewers = setup.Stages.Where(other => viewerStages.Contains(other.Key)).SelectMany(other => other.Assignment.Members).Distinct();
+            foreach (var viewer in viewers)
+                if (await users.HasRoleAsync(viewer, WorkflowConfigurationValidator.ApproverRole, context.CancellationToken))
+                    tags.Add(ObservedTaskAccess.TagFor(TicketState.User(viewer)));
+        }
+
+        // Workflow supervisors see every task of this workflow, including corrections.
         foreach (var supervisor in setup.Supervisors ?? [])
             if (await users.HasRoleAsync(supervisor, WorkflowSetup.SupervisorRole, context.CancellationToken))
                 tags.Add(ObservedTaskAccess.SupervisorTagFor(TicketState.User(supervisor)));
-        if (tags.Count > 0) context.SetProperty("observerTags", ConfigJson.Write(tags));
-        if (!parallelBranch)
-        {
-            context.WorkflowExecutionContext.Output["currentStage"] = stage.Key;
-            context.WorkflowExecutionContext.Output["ticketOutcome"] = (correction ? TicketOutcome.Returned : TicketOutcome.InReview).ToString();
-        }
-        await context.ScheduleActivityAsync(Review, OnCompletedAsync);
+
+        return [.. tags];
     }
-    private async ValueTask OnCompletedAsync(ActivityCompletedContext completed)
-    {
-        var context = completed.TargetContext;
-        var stimulus = context.GetWorkflowInput<UserTaskStimulus>(UserTask.InputKey);
-        var parallelBranch = context.GetProperty<bool>("parallelBranch");
-        if (!string.Equals(stimulus.ActionKey, TaskActionKeys.Resubmit, StringComparison.OrdinalIgnoreCase))
-        {
-            // A configured stage action. The form provider already checked it belongs to this stage.
-            var action = StageOf(context)?.Actions?.FirstOrDefault(x => string.Equals(x.Key, stimulus.ActionKey, StringComparison.OrdinalIgnoreCase))
-                ?? throw new InvalidOperationException("Unknown task action.");
-            if (!parallelBranch)
-            {
-                context.ExpressionExecutionContext.SetVariable("lastAction", action.Key);
-                context.WorkflowExecutionContext.Output["lastDecision"] = action.Key;
-            }
-            await context.CompleteActivityWithOutcomesAsync(StagePorts.Action);
-            return;
-        }
-        // A correction task: the form provider already validated the payload. Revalidate at the execution boundary,
-        // preserve the preceding snapshot, then expose a Resubmit outcome to the graph's configured edge.
-        var attributes = stimulus.CompletionData!.Value.GetProperty("attributes").Deserialize<Dictionary<string, JsonElement>>()!;
-        var schema = ConfigJson.Read<WorkflowSetup>(context.GetProperty<string>("schema")!);
-        await new TicketInputValidator(schema).ValidateAndThrowAsync(attributes, context.CancellationToken);
-        var output = context.WorkflowExecutionContext.Output;
-        var revision = int.Parse(output["attributeRevision"].ToString()!) + 1;
-        var storedHistory = JsonSerializer.SerializeToElement(output["attributeHistory"]);
-        // Older Elsa property-bag serialization may wrap collections in $values.
-        if (storedHistory.ValueKind == JsonValueKind.Object && storedHistory.TryGetProperty("$values", out var wrapped)) storedHistory = wrapped;
-        var history = storedHistory.EnumerateArray().Select(x => x.Clone()).ToList();
-        history.Add(JsonSerializer.SerializeToElement(new { revision, attributes }));
-        output["attributeRevision"] = revision;
-        output["attributeHistory"] = JsonSerializer.SerializeToElement(history);
-        TicketState.SetAttributes(context, attributes, schema);
-        await context.CompleteActivityWithOutcomesAsync(StagePorts.Resubmit);
-    }
+
+    private static ActivityExecutionContext Owner(ExpressionExecutionContext context) =>
+        context.GetActivityExecutionContext().ParentActivityExecutionContext!;
+
+    private static ResolvedAssignment GetAssignment(ActivityExecutionContext owner) =>
+        Application.Common.ConfigurationJson.Read<ResolvedAssignment>(owner.GetProperty<string>(AssignmentKey)!);
+
+    private static StageDefinition GetStage(ActivityExecutionContext owner) =>
+        Application.Common.ConfigurationJson.Read<WorkflowSetup>(owner.GetProperty<string>(SetupKey)!).FindStage(owner.GetProperty<string>(StageKeyKey)!)!;
+
+    private static UserTaskActionDefinition[] GetButtons(ActivityExecutionContext owner) =>
+        owner.GetProperty<bool>(CorrectionKey)
+            ? [new(TaskActionKeys.Resubmit, "Resubmit")]
+            : GetStage(owner).Actions!.Select(action => new UserTaskActionDefinition(action.Key, action.DisplayLabel)).ToArray();
+
+    private static string FormKey(ActivityExecutionContext owner) =>
+        owner.GetProperty<bool>(CorrectionKey) ? TicketFormProvider.CorrectionFormKey : TicketFormProvider.ReviewFormKey(owner.GetProperty<string>(StageKeyKey)!);
 }

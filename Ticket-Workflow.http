@@ -6,8 +6,8 @@
 @adminPassword = password
 @samplePassword = Password123!
 # Paste the published definitionId from Workflow-Configuration.http.
-# Main sequence: 6000 -> A -> B -> C -> D -> Approved.
-# To test 4000 or 5000, change claimAmount and SKIP all C requests.
+# Main sequence: A (APPROVE) -> B (REFER_UW) -> C (APPROVE) -> D (APPROVE) -> Approved.
+# To skip C, send APPROVE at B instead of REFER_UW and SKIP all C requests.
 @definitionId = PASTE_PUBLISHED_DEFINITION_ID
 
 ### Login: configured-requester
@@ -83,7 +83,7 @@ Content-Type: application/json
 
 
 ### Submit through native Elsa execute
-# Expect workflowState.subStatus=Suspended. Requester is derived from your token. Supply the conditional fields under input.attributes.
+# Expect workflowState.subStatus=Suspended. Requester is derived from your token. input.attributes is the ticket's business data; it is stored as sent.
 # @name startTicket
 POST {{baseUrl}}/elsa/api/workflow-definitions/{{definitionId}}/execute
 Authorization: Bearer {{requesterLogin.response.body.$.accessToken}}
@@ -146,14 +146,14 @@ GET {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}
 Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
 
 
-### B: approve
-# May return 202 accepted/completing. Direct native API calls still pass through our FluentValidation form provider.
+### B: refer to underwriting (custom action -> C)
+# REFER_UW requires a reason. May return 202 accepted/completing. Direct native API calls still pass through our FluentValidation form provider.
 # @name bApprove
 POST {{baseUrl}}/elsa/api/user-tasks/{{bTasks.response.body.$.items[0].id}}/complete
 Authorization: Bearer {{bobLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
-{"expectedRevision": {{bDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "APPROVE", "data": {"comment": "B reviewed"}}
+{"expectedRevision": {{bDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "REFER_UW", "data": {"reason": "High value claim"}}
 
 
 ### C: find current task

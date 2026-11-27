@@ -1,10 +1,14 @@
-namespace IlWorkflow.Api.Workflows;
+namespace IlWorkflow.Infrastructure.Workflows;
 
-/// <summary>Outcome ports of the generated flowchart. Action: any configured stage action (routed by the recorded key). Resubmit: a correction task.</summary>
+/// <summary>
+/// Names of the outcome ports used in the generated flowchart.
+/// A normal review task leaves through a port named after the pressed action key (APPROVE, REFER_UW, ...).
+/// </summary>
 public static class StagePorts
 {
-    public const string Action = "Action";
+    /// <summary>A correction task was resubmitted by the requester.</summary>
     public const string Resubmit = "Resubmit";
+
     // Parallel groups only: the first approval continues, all rejections reject.
     public const string Approve = "Approve";
     public const string Reject = "Reject";

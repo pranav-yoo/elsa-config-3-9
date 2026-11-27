@@ -3,37 +3,53 @@ using FluentValidation;
 
 namespace IlWorkflow.Application.Validation;
 
+/// <summary>The button a user pressed (<paramref name="Action"/>) and the JSON they sent with it.</summary>
 public sealed record DecisionData(string Action, JsonElement Data);
 
-/// <summary>Validates the button a user pressed: it must be one of the stage's configured actions (or RESUBMIT on a correction task).</summary>
+/// <summary>
+/// Validates the data sent when a task is completed. Elsa calls this through <c>TicketFormProvider</c>
+/// for every completion, so no endpoint can skip it. Elsa itself already rejects action keys
+/// that the task does not offer (HTTP 422 "invalid-action").
+/// </summary>
 public sealed class TaskDecisionValidator : AbstractValidator<DecisionData>
 {
-    /// <param name="stageKey">Stage of a review task; null for a correction task.</param>
-    public TaskDecisionValidator(WorkflowSetup setup, bool correction, string? stageKey = null)
+    /// <param name="stage">The stage of a review task, or null for a correction task.</param>
+    public TaskDecisionValidator(StageDefinition? stage)
     {
-        var offered = setup.Stages.FirstOrDefault(x => x.Key == stageKey)?.Actions ?? [];
-        RuleFor(x => x).Custom((request, context) =>
+        RuleFor(x => x.Data.ValueKind).Equal(JsonValueKind.Object).WithMessage("Supply a data object.");
+        When(x => x.Data.ValueKind == JsonValueKind.Object, () =>
         {
-            if (request.Data.ValueKind != JsonValueKind.Object) { context.AddFailure("Supply a data object."); return; }
-            if (correction)
-            {
-                if (!string.Equals(request.Action, TaskActionKeys.Resubmit, StringComparison.OrdinalIgnoreCase)
-                    || !request.Data.TryGetProperty("attributes", out var attributes) || attributes.ValueKind != JsonValueKind.Object)
-                { context.AddFailure("Resubmit requires a complete attributes object."); return; }
-                if (request.Data.EnumerateObject().Any(x => x.Name != "attributes")) context.AddFailure("Unknown correction field.");
-                var values = attributes.Deserialize<Dictionary<string, JsonElement>>()!;
-                foreach (var failure in new TicketInputValidator(setup).Validate(values).Errors) context.AddFailure(failure);
-            }
-            else
-            {
-                var action = offered.FirstOrDefault(x => string.Equals(x.Key, request.Action, StringComparison.OrdinalIgnoreCase));
-                if (action is null) { context.AddFailure("Unknown action. Use one of: " + string.Join(", ", offered.Select(x => x.Key)) + "."); return; }
-                foreach (var field in request.Data.EnumerateObject())
-                    if (field.Name is not ("reason" or "comment") || field.Value.ValueKind != JsonValueKind.String) context.AddFailure("Only string reason/comment fields are accepted; attributes are frozen.");
-                if (action.RequireReason
-                    && (!request.Data.TryGetProperty("reason", out var reason) || reason.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(reason.GetString())))
-                    context.AddFailure($"{action.DisplayLabel} requires a reason.");
-            }
+            if (stage is null) RuleFor(x => x).Custom(CheckResubmit);
+            else RuleFor(x => x).Custom((decision, context) => CheckReview(stage, decision, context));
         });
+    }
+
+    /// <summary>A correction task offers only RESUBMIT, with the (possibly changed) ticket attributes.</summary>
+    private static void CheckResubmit(DecisionData decision, ValidationContext<DecisionData> context)
+    {
+        if (!decision.Data.TryGetProperty("attributes", out var attributes) || attributes.ValueKind != JsonValueKind.Object)
+            context.AddFailure("RESUBMIT requires an \"attributes\" object.");
+        if (decision.Data.EnumerateObject().Any(field => field.Name != "attributes"))
+            context.AddFailure("RESUBMIT accepts only \"attributes\".");
+    }
+
+    /// <summary>A review task accepts an optional comment and a reason (required when the action says so).</summary>
+    private static void CheckReview(StageDefinition stage, DecisionData decision, ValidationContext<DecisionData> context)
+    {
+        foreach (var field in decision.Data.EnumerateObject())
+            if (field.Name is not ("reason" or "comment") || field.Value.ValueKind != JsonValueKind.String)
+                context.AddFailure("Only string \"reason\" and \"comment\" fields are accepted.");
+
+        var action = stage.Actions?.FirstOrDefault(x => string.Equals(x.Key, decision.Action, StringComparison.OrdinalIgnoreCase));
+        if (action is null)
+        {
+            context.AddFailure($"Unknown action '{decision.Action}'.");
+            return;
+        }
+
+        var hasReason = decision.Data.TryGetProperty("reason", out var reason)
+            && reason.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(reason.GetString());
+        if (action.RequireReason && !hasReason)
+            context.AddFailure($"{action.DisplayLabel} requires a reason.");
     }
 }

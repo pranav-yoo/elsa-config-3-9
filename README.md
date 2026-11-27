@@ -1,153 +1,142 @@
 # Configurable ticket approvals with Elsa 3.9
 
-Open `ilworkflow.slnx` in Visual Studio. Set **ilworkflow.API** as the startup project.
+An approval workflow API. A configurator describes the stages of a workflow in JSON; the API turns that JSON
+into a normal **Elsa 3.9** flowchart. Elsa then runs the tickets, stores them in PostgreSQL and creates the
+user tasks (inbox items with buttons such as Approve / Reject).
 
-| Project | Responsibility |
+## Projects
+
+| Project | What it contains |
 |---|---|
-| ilworkflow.API | Program.cs, service registration, controllers, middleware, Swagger and settings |
-| ilworkflow.Application | Ports (service interfaces), FluentValidation, task validation and assignment policies |
-| ilworkflow.Contracts | HTTP request and response models, one folder per module (`WorkflowConfigurations`, `Tasks`), each split into `Requests/` and `Responses/` |
-| ilworkflow.Domain | Configuration entity, enums, value records and exact attribute comparisons |
-| ilworkflow.Infrastructure | PostgreSQL/EF, Elsa workflows/stores and identity adapters |
+| ilworkflow.Domain | The workflow model (`WorkflowSetup`, `StageDefinition`, `StageAction`, ...) and the configuration entity. No dependencies. |
+| ilworkflow.Contracts | HTTP request/response records, one folder per module (`WorkflowConfigurations`, `Tasks`). |
+| ilworkflow.Application | FluentValidation validators, `AssignmentResolver`, service interfaces. No Elsa or EF Core. |
+| ilworkflow.Infrastructure | Everything Elsa and PostgreSQL: the flowchart builder, custom activities, task service, EF Core. |
+| ilworkflow.API | `Program.cs`, controllers, middleware, settings. |
 
-Contracts depends only on Domain value types. Application depends on Domain/Contracts. Infrastructure depends on Application/Contracts/Domain. API composes them. Add a new endpoint's request/response records to the matching Contracts module folder, not to a controller. Domain and Application have no Elsa or EF Core dependencies. See [architecture notes](docs/ARCHITECTURE.md) and [developer guide](docs/DEVELOPER-GUIDE.md).
+Dependencies point inward: API → Infrastructure → Application → Domain. See [architecture notes](docs/ARCHITECTURE.md) and the [developer guide](docs/DEVELOPER-GUIDE.md).
 
 ## Start
 
 ```powershell
-dotnet restore ilworkflow.slnx
 dotnet build ilworkflow.slnx
 # First setup only:
 pwsh -NoProfile -ExecutionPolicy Bypass -File ./Setup.ps1
 dotnet run --project ilworkflow.API --launch-profile http
 ```
 
-Open http://localhost:5000/swagger. API owns appsettings, launch profiles and Samples. Custom composition is in `ilworkflow.API/Extensions/WorkflowServiceRegistration.cs`.
+Open http://localhost:5000/swagger. Development uses PostgreSQL on localhost:5432, database `ilworkflow`, user `postgres`.
+Put the database password and `Identity:Tokens:SigningKey` (32+ characters) in user secrets (`UserSecretsId` `ilworkflow-elsa-local`).
 
-Development uses PostgreSQL localhost:5432, database ilworkflow, account postgres. Credentials/signing keys belong in API user secrets. The existing UserSecretsId `ilworkflow-elsa-local` is unchanged. Restart does not reset persisted passwords. Packages remain pinned to Elsa 3.9.0.
+Documentation only, without PostgreSQL: `dotnet run --project ilworkflow.API --launch-profile http -- --SwaggerPreview true` (business operations return 503).
 
-For documentation without PostgreSQL: `dotnet run --project ilworkflow.API --launch-profile http -- --SwaggerPreview true`. Preview skips migrations and returns 503 for business operations.
+## How a ticket flows
 
-## Ordered requests
-
-Run requests one at a time; use named responses within a file and copy marked IDs between files.
-
-1. [Authentication.http](Authentication.http): native local roles/users and login. Sample accounts use the configured- prefix and Password123! password. Inspect existing users/roles before creating records.
-2. [Workflow-Configuration.http](Workflow-Configuration.http): create/update draft, validate, publish and create next version.
-3. [Ticket-Workflow.http](Ticket-Workflow.http): internal submission, A/B/C/D approvals, rejection/correction, history and reassignment.
-
-### Definition IDs and attributes
-
-Pass `workflow_definition_id` in `POST /api/workflow-configurations` to create Elsa's workflow with that exact ID. Sending an existing definition ID without `workflow_version` creates its next version, and returns 409 while another draft of that definition is still open.
-
-Attributes are not configurable for now. The attribute catalog (`/api/workflow-attributes`) was removed, and every configuration is stored and returned with `"attributes": []`. Because no attribute exists, rule conditions are rejected with 400 and execution input must be `{ "attributes": {} }`. Migration `202611260001_DropWorkflowAttributes` drops the old table.
-
-`POST /api/workflow-configurations` is the only write endpoint. Configurations are addressed by `workflow_definition_id` and `workflow_version` (Elsa's integer version number, 1, 2, 3, ...):
-
-| Body | Result |
-|---|---|
-| `configuration` only | New definition with a generated `workflow_definition_id` and its first version. |
-| `workflow_definition_id` + `configuration` | That definition if it does not exist yet, otherwise its **next version**. Returns 409 while a draft of it is still open. |
-| `workflow_definition_id` + `workflow_version` + `configuration` | Updates that draft version. Unknown version returns 404; a published version returns 409. |
-
-`workflow_version` without `workflow_definition_id` returns 400. The retired request fields `definition_id`, `id` and `expected_revision` also return 400 instead of being ignored. Read with `POST /api/workflow-configurations/get` and body `{ "workflow_definition_id": "...", "workflow_version": 2 }`; `workflow_version` is optional and, when omitted, returns the latest version. Validate and publish use `/api/workflow-configurations/{workflow_definition_id}/versions/{workflow_version}` (`POST .../validate`, `POST .../publish`). There is no `next-draft` route.
-
-Responses return `workflow_definition_id`, `workflow_version`, `revision`, `is_published` and `configuration`. `revision` is an internal counter: it starts at 1 for each version, grows on every save and publish, and is never sent by clients. Published snapshots are immutable. Execution, tasks, instances and history use native Elsa APIs. No custom PUT or /api/tickets endpoint exists.
-
-Above 5000, approval passes through C; 5000 and below bypass C. Rejection: A returns to correction/A; B returns to A; C ends Rejected; D returns to correction/D. Resubmission uses the same instance and preserves attribute revisions. Read workflowState.output.ticketOutcome for Approved/Rejected; technical Finished is not a business outcome. Poll after 202 completion. Reuse the original operationId/body/revision when retrying one command.
-
-Review tasks expose the stage's `actions` (`APPROVE`, `REJECT` and any custom keys). Correction tasks expose `RESUBMIT`. Use the exact `actions[].key` returned by task detail when sending `actionKey`, including for older pending tasks.
-
-### Assignment policies
-
-- `Bucket`: every `members` entry sees the task and one of them claims it. With a single eligible member the task is assigned to that member directly (no claim).
-- `Specific`: assigned directly to `userId`. With a single member, omit `userId`; that member is the owner. With several members, `userId` is required and must be one of them.
-- `Condition`: the first matching rule's `userId` (one of `members`) is the owner; no match blocks the task for supervisor assignment.
-
-### Response format (/api/*)
-
-All application endpoints (`/api/tasks`, `/api/workflow-configurations`) return
-`{ "trace_id": "...", "status_code": 200, "messages": ["..."], "data": { ... } }` (`Result<T>` in `ilworkflow.Contracts/SharedContracts`, built by `ApiResultHelper` in `ilworkflow.API/Common`), for success and errors (errors put `code` and, for validation, `errors[]` in `data`).
-Elsa's native `/elsa/api/*` endpoints keep Elsa's format.
-All `/api/*` property and query names are snake_case (`definition_id`, `start_stage`, `stage_key`, `or_group`, `require_reason`, `expected_revision`, `workflow_instance_id`, …). Ticket attribute names (e.g. `claimAmount`) and enum values (`Stage`, `Bucket`, `APPROVE`) are unchanged.
-
-### Workflow supervisors
-
-Add `"supervisors": ["<userId>", ...]` to the workflow (next to `name`, `start_stage`). Listed users see every task of that workflow (all stages, correction and blocked tasks) and can reassign them; they cannot claim or complete. They need the `workflow_supervisor` role (`user-tasks:view`, `user-tasks:assign`, `workflows/instances:view`, deliberately no `user-tasks:supervise`), so they see only the workflows that list them; see Authentication.http. The global `Supervisor` role still sees everything.
-
-- List: `GET /elsa/api/user-tasks?scope=supervised` (filters: workflowInstanceId, status, cursor, limit, includeTotalCount).
-- Detail/history: `GET /elsa/api/user-tasks/{id}`, `/events`, and `GET /elsa/api/workflow-instances/{instanceId}`.
-- Reassign: `POST /elsa/api/user-tasks/{id}/assign` (native Elsa body).
-
-The list is part of the published snapshot: tasks are tagged when created, so changing supervisors needs a new version and applies to new tasks.
-
-### Stage actions (task buttons)
-
-Each stage lists its own task buttons in `actions`; there are no required or built-in keys. A key is UPPER_CASE (for example `APPROVE`, `REFER_UW`, `SEND_TO_LEGAL`) and `RESUBMIT` is reserved for correction tasks. Each action has an optional `label` (defaults to the key), a `destination` (`Stage`, `Correction`, `Approved` or `Rejected`), optional `rules` that pick a conditional destination (first match wins) and `"require_reason": true` when the user must send `data.reason`. Stages may route back and forth; there is no cycle check. The one exception is a parallel group (`parallel_with`): it means "the first approval continues, every rejection rejects", so each stage in the group offers exactly `APPROVE` and `REJECT` with identical destinations, and routing rules go on the entry stage only.
-
-```json
-"actions": [
-  { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Stage", "stage_key": "D" },
-    "rules": [ { "conditions": [ { "attribute": "claimAmount", "operator": "GreaterThan", "value": 5000 } ],
-                 "destination": { "kind": "Stage", "stage_key": "C" } } ] },
-  { "key": "REJECT", "label": "Reject", "destination": { "kind": "Stage", "stage_key": "A" }, "require_reason": true },
-  { "key": "REFER_UW", "label": "Refer to UW", "destination": { "kind": "Stage", "stage_key": "UW" }, "require_reason": true }
-]
+```
+1. Configurator  POST /api/workflow-configurations                   save a draft (validated, compiled to an Elsa flowchart)
+2. Configurator  POST /api/workflow-configurations/{id}/versions/{v}/publish
+3. Requester     POST /elsa/api/workflow-definitions/{id}/execute    { "input": { "attributes": { ... } } }
+4. Approver      GET  /api/tasks?scope=assigned                       the task shows the stage's buttons
+5. Approver      POST /api/tasks/{taskId}/complete                    { "action_key": "APPROVE", "data": { "comment": "ok" } }
+6. Anyone        GET  /elsa/api/workflow-instances/{instanceId}       workflowState.output.ticketOutcome = Approved | Rejected
 ```
 
-The task's `actions` (key + label) in `GET /elsa/api/user-tasks` and task detail are exactly these buttons; complete with `actionKey` set to one of them. Instance output `lastDecision` holds the chosen key. Configurations that still use `approveTo` / `rejectTo` / `approveRules` are no longer accepted; send `actions`.
+`attributes` is the ticket's business data (for example `{ "claimAmount": 6000 }`). It is stored with every revision and
+shown on tasks, but the workflow does not interpret it. Elsa's status `Finished` only means the workflow ended; read
+`ticketOutcome` for the business result.
 
-### Rule conditions (AND / OR)
+## Requests to try, in order
 
-`actions[].rules[]` and `assignment.rules[]` hold a `conditions` list. Conditions without `or_group` must all match; within each `or_group` number at least one must match. Rules are checked in order and the first match wins. Maximum 20 conditions per rule.
+Run one request at a time (VS Code REST Client) and copy the IDs between files.
+
+1. [Authentication.http](Authentication.http): roles, users and login. Sample password `Password123!`.
+2. [Workflow-Configuration.http](Workflow-Configuration.http): create, update, validate and publish a configuration.
+3. [Ticket-Workflow.http](Ticket-Workflow.http): submit a ticket, approve, reject, correct and resubmit.
+4. [Parallel-Approvals.http](Parallel-Approvals.http) and [Observed-Tasks.http](Observed-Tasks.http).
+
+## The configuration request
+
+`POST /api/workflow-configurations` is the only write endpoint. All `/api/*` JSON names are snake_case.
+
+| Body contains | Result |
+|---|---|
+| `configuration` only | New definition with a generated `workflow_definition_id`, version 1. |
+| `workflow_definition_id` + `configuration` | That definition, or its **next version** if it exists (409 while a draft is still open). |
+| `workflow_definition_id` + `workflow_version` + `configuration` | Updates that draft (404 unknown version, 409 if already published). |
 
 ```json
 {
-  "conditions": [
-    { "attribute": "claimAmount", "operator": "GreaterThan", "value": 5000 },
-    { "attribute": "department", "operator": "Equals", "value": "Finance", "or_group": 1 },
-    { "attribute": "department", "operator": "Equals", "value": "HR", "or_group": 1 }
-  ],
-  "destination": { "kind": "Stage", "stage_key": "C" }
+  "workflow_definition_id": "expense-claim",
+  "configuration": {
+    "name": "Expense claim",
+    "start_stage": "A",
+    "supervisors": ["<userId>"],
+    "stages": [
+      {
+        "key": "A",
+        "title": "Initial review",
+        "assignment": { "policy": "Bucket", "members": ["<userId>", "<userId>"] },
+        "viewable_by_stages": ["B"],
+        "actions": [
+          { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Stage", "stage_key": "B" } },
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Correction", "stage_key": "A" }, "require_reason": true }
+        ]
+      },
+      {
+        "key": "B",
+        "title": "Final approval",
+        "assignment": { "policy": "Specific", "members": ["<userId>"] },
+        "actions": [
+          { "key": "APPROVE", "destination": { "kind": "Approved" } },
+          { "key": "REFER_UW", "label": "Refer to UW", "destination": { "kind": "Stage", "stage_key": "A" }, "require_reason": true },
+          { "key": "REJECT", "destination": { "kind": "Rejected" }, "require_reason": true }
+        ]
+      }
+    ]
+  }
 }
 ```
 
-This means claimAmount > 5000 AND (department = Finance OR HR). Older configurations stored a single `when` object; it is still read (as a one-item list) so published versions keep routing, but new requests should use `conditions`.
+Read a version with `POST /api/workflow-configurations/get` and `{ "workflow_definition_id": "...", "workflow_version": 2 }`
+(omit the version for the latest). Validate and publish: `POST /api/workflow-configurations/{id}/versions/{version}/validate` and `.../publish`.
+Published versions never change; running tickets keep the version they started with.
 
-## Parallel approvals
+### Fields
 
-Add `"parallelWith": ["D"]` to stage C. Routes into C open both C and D as separate Elsa tasks. The first approval follows C's approval route and cancels unanswered tasks. If every branch rejects, the group follows C's rejection route. Define C and D as regular stages with their own assignments and matching default destinations. Put shared approval rules on C and route to C to enter the group.
+- **`actions`**: the buttons of a stage. `key` is UPPER_CASE (`RESUBMIT` is reserved), `label` defaults to the key,
+  `require_reason: true` makes `data.reason` mandatory.
+- **`destination.kind`**:
+  - `Stage` + `stage_key`: open that stage.
+  - `Correction` + `stage_key`: send the ticket back to the requester; after RESUBMIT it continues at `stage_key`.
+  - `Approved` / `Rejected`: finish the ticket.
+- **`assignment.policy`**:
+  - `Bucket`: all members see the task and one claims it. A single member gets it directly.
+  - `Specific`: one owner. Set `user_id` when there is more than one member.
+- **`parallel_with`**: `["C"]` on stage B opens B and C together. The first APPROVE continues, the group is rejected only when every
+  task rejects. Every stage of a group offers exactly APPROVE and REJECT with the same destinations.
+- **`viewable_by_stages`**: members of those stages can read (not act on) this stage's task: `GET /api/tasks?scope=observed`.
+- **`supervisors`**: users with role `workflow_supervisor` who see and can reassign every task of this workflow:
+  `GET /api/tasks?scope=supervised`.
 
-Run the [parallel approval requests](Parallel-Approvals.http) for each decision order. Use `dotnet test ilworkflow.Tests --filter ParallelWorkflowTests` for the live PostgreSQL checks, then restart the API and repeat with `ILWORKFLOW_VERIFY_RESTART=1`.
+Members, owners and supervisors are Elsa user IDs (returned when the user is created), not usernames. Members need the `Approver` role.
 
-## Read-only stage access
+## Responses
 
-Add `"viewableByStages": ["D"]` to stage C. When C's task opens, the eligible members of D can see it immediately. Use `GET /elsa/api/user-tasks?scope=observed` to list tasks and the native detail and events endpoints to read them. The viewer grant follows that task into history. Use `allowedActions` to decide which controls to show. Observing a task grants no claim, completion, or management permission.
+`/api/*` endpoints return `{ "trace_id", "status_code", "messages", "data" }`; errors put a `code` (and `errors[]` for validation) in `data`.
+Elsa's own `/elsa/api/*` endpoints keep Elsa's format. Task commands return 202 (accepted; the next task may take a moment to appear)
+or 409 (the task changed: reload and retry). Invalid task data returns Elsa's 422.
 
-The observed list supports `workflowInstanceId`, `status`, `limit` (1–50), `cursor`, and `includeTotalCount`. Run [Observed-Tasks.http](Observed-Tasks.http) to test sequential read-only access. For an existing definition, publish a new version with the setting to apply it to new task snapshots.
+## Verify
 
-## Users
-
-All users are local Elsa Identity accounts and sign in with `POST /elsa/api/identity/login`. Stage `members`/`userId` hold the Elsa user ID returned when the user is created, not the username. Specific tasks use scope=assigned; buckets use scope=available and must be claimed.
-
-## Persistence and verification
-
-Elsa Identity EF stores accounts/roles. Management/runtime stores definitions/instances/bookmarks. User Tasks EF stores tasks, candidates, revisions and events. Application EF stores version-linked configuration and the preconfigured field master in its existing Application schema. The instance ID is the ticket reference; submitted attribute values/history/outcomes remain in Elsa.
-
-Migration IDs, schemas and persisted activity identities are preserved. Existing immutable definitions require a new version to receive changed graph generation. Keep the native 3.9 PostgreSQL compatibility fixes; keyword task search returns explanatory 400, while scope/status/instance/reference filters remain available.
-
-Use a research database; tests create records but do not save tokens.
+`Tests/smoke_workflow.py` runs the full flow against a live API (configuration, publish, custom action, correction, rejection,
+parallel group, observed and supervised lists):
 
 ```powershell
-# Live tests (ilworkflow.Tests) skip when the API is unreachable.
-$env:ILWORKFLOW_BASE_URL = "http://localhost:5000"
-dotnet test ilworkflow.Tests
-# Restart API, then:
-$env:ILWORKFLOW_VERIFY_RESTART = "1"; dotnet test ilworkflow.Tests; Remove-Item Env:ILWORKFLOW_VERIFY_RESTART
-# In documentation preview instead:
-$env:ILWORKFLOW_VERIFY_PREVIEW = "1"; dotnet test ilworkflow.Tests --filter ConfiguredWorkflowTests; Remove-Item Env:ILWORKFLOW_VERIFY_PREVIEW
+python Tests/smoke_workflow.py --attributes
 ```
 
-Checks cover conditional routing, correction, exact comparisons, cycles, concurrency, permissions, version pinning and restart recovery.
+The C# live tests in `ilworkflow.Tests` still target the removed conditional-routing feature and need updating before use.
 
-All-approver and quorum policies, round robin, submission outbox, frontend, attachments, notifications, SLA escalation and external identity providers remain deferred.
+## Not included yet
+
+Conditional routing on attribute values, all-approver/quorum policies, notifications, SLA escalation, attachments and external identity providers.

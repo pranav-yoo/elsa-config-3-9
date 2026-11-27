@@ -40,10 +40,12 @@ if (!swaggerPreview)
     await scope.ServiceProvider.GetRequiredService<ApplicationDbContext>().Database.MigrateAsync();
 }
 if (app.Environment.IsDevelopment()) app.UseSwaggerSnakeCase();
+// Order matters: each middleware runs for every request, top to bottom.
+app.UseMiddleware<ExceptionHandlingMiddleware>(); // turns thrown errors into 4xx responses
 app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
-app.UseMiddleware<WorkflowRequestGuard>();
+app.UseMiddleware<WorkflowRequestGuard>();       // our rules in front of Elsa's /elsa/api endpoints
 app.UseWorkflows();
 if (app.Environment.IsDevelopment())
 {

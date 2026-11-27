@@ -4,10 +4,6 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
-  <!-- Preserve the assembly identity used by persisted Elsa activity/property types. -->
-  <PropertyGroup>
-    <AssemblyName>IlWorkflow.Api</AssemblyName>
-  </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Elsa" Version="3.9.0" />
     <PackageReference Include="Elsa.Persistence.EFCore.PostgreSql" Version="3.9.0" />

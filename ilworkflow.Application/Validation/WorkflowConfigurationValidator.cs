@@ -1,133 +1,197 @@
+using System.Text.RegularExpressions;
 using FluentValidation;
 
 namespace IlWorkflow.Application.Validation;
 
-/// <summary>Publish-time validation runs asynchronously; do not use MVC's synchronous auto-validation.</summary>
-public sealed class WorkflowConfigurationValidator : AbstractValidator<WorkflowSetup>
+/// <summary>
+/// Checks that a workflow setup is complete and consistent before it is saved or published.
+/// Each rule below is a small method with a clear name; read them top to bottom.
+/// </summary>
+public sealed partial class WorkflowConfigurationValidator : AbstractValidator<WorkflowSetup>
 {
+    public const string ApproverRole = "Approver";
+
+    private readonly IApproverDirectory _users;
+
     public WorkflowConfigurationValidator(IApproverDirectory users)
     {
+        _users = users;
+
         RuleFor(x => x.Name).NotEmpty().MaximumLength(200);
-        RuleFor(x => x.Attributes).NotNull();
-        RuleFor(x => x.Stages).NotNull().NotEmpty();
-        RuleFor(x => x).CustomAsync(async (setup, context, ct) =>
+        RuleFor(x => x.Stages).NotEmpty().WithMessage("At least one stage is required.");
+        RuleForEach(x => x.Stages).NotNull().WithMessage("Stages cannot be null.");
+
+        // The rules below compare stages with each other, so they only run on a basic valid list.
+        When(HasUsableStages, () =>
         {
-            if (setup.Attributes is null || setup.Stages is null || setup.Stages.Length == 0) return;
-            if (setup.Attributes.Any(x => x is null) || setup.Stages.Any(x => x is null)) { context.AddFailure("Null fields/stages are not supported."); return; }
-            void Error(string message) => context.AddFailure(message);
-            bool Key(string key) => !string.IsNullOrEmpty(key) && System.Text.RegularExpressions.Regex.IsMatch(key, "^[A-Za-z][A-Za-z0-9_]{0,63}$");
-            if (setup.Attributes.Select(x => x.Key).Distinct().Count() != setup.Attributes.Length) Error("Duplicate attribute keys.");
-            if (setup.Stages.Select(x => x.Key).Distinct().Count() != setup.Stages.Length) { Error("Duplicate stage keys."); return; }
-            if (!setup.Stages.Any(x => x.Key == setup.StartStage)) Error("Unknown start stage.");
-            // A parallel group means "the first approval continues, all rejections reject", so its stages offer exactly APPROVE and REJECT.
-            static bool OffersApproveAndReject(StageDefinition stage) =>
-                (stage.Actions ?? []).Select(x => x.Key).Order().SequenceEqual([TaskActionKeys.Approve, TaskActionKeys.Reject]);
-            static Dictionary<string, Destination> DestinationsOf(StageDefinition stage) => (stage.Actions ?? []).ToDictionary(x => x.Key, x => x.Destination);
-            var parallelMembers = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var entry in setup.Stages.Where(stage => stage.ParallelWith is not null))
-            {
-                if (entry.ParallelWith!.Length == 0) Error($"Parallel stage '{entry.Key}' must name at least one other stage.");
-                if (!OffersApproveAndReject(entry)) Error($"Parallel stage '{entry.Key}' must offer exactly the {TaskActionKeys.Approve} and {TaskActionKeys.Reject} actions.");
-                foreach (var key in entry.ParallelWith)
-                {
-                    var member = setup.Stages.FirstOrDefault(stage => stage.Key == key);
-                    if (string.IsNullOrEmpty(key) || member is null || member == entry)
-                    {
-                        Error($"Invalid parallel stage '{key}' in '{entry.Key}'.");
-                        continue;
-                    }
-                    if (!parallelMembers.Add(key)) Error($"Parallel stage '{key}' is listed more than once.");
-                    if (member.ParallelWith is not null) Error($"Parallel stage '{key}' cannot start another group.");
-                    if (!OffersApproveAndReject(member)) Error($"Parallel stage '{key}' must offer exactly the {TaskActionKeys.Approve} and {TaskActionKeys.Reject} actions.");
-                    else if (OffersApproveAndReject(entry) && !DestinationsOf(member).OrderBy(x => x.Key).SequenceEqual(DestinationsOf(entry).OrderBy(x => x.Key)))
-                        Error($"Parallel stage '{key}' must match the action destinations of '{entry.Key}'.");
-                    if (member.Actions?.Any(x => x.Rules is { Length: > 0 }) == true) Error($"Put parallel routing rules on '{entry.Key}', not '{key}'.");
-                }
-            }
-            if (parallelMembers.Contains(setup.StartStage)) Error("Start at the entry stage of the parallel group.");
-            if (setup.Supervisors is { } supervisors)
-            {
-                if (supervisors.Distinct(StringComparer.Ordinal).Count() != supervisors.Length) Error("Duplicate supervisors.");
-                foreach (var supervisor in supervisors)
-                    if (string.IsNullOrWhiteSpace(supervisor) || !await users.HasRoleAsync(supervisor, WorkflowSetup.SupervisorRole, ct))
-                        Error($"Unknown supervisor {supervisor} or missing role {WorkflowSetup.SupervisorRole}.");
-            }
-            var fields = new AttributeDefinitionValidator();
-            foreach (var field in setup.Attributes)
-                foreach (var failure in fields.Validate(field).Errors) Error(failure.ErrorMessage);
-            bool DestinationValid(Destination? destination)
-            {
-                if (destination is null || !Enum.IsDefined(destination.Kind)) return false;
-                if (destination.Kind is DestinationKind.Stage or DestinationKind.Correction)
-                    return destination.StageKey is { } key && !parallelMembers.Contains(key)
-                        && setup.Stages.Any(x => x.Key == key);
-                return string.IsNullOrEmpty(destination.StageKey);
-            }
-            void ConditionValid(AttributeCondition? condition)
-            {
-                if (condition is null) { Error("A condition is required."); return; }
-                var field = setup.Attributes.FirstOrDefault(x => x.Key == condition.Attribute);
-                if (field is null) { Error($"Condition attribute '{condition.Attribute}' is missing or inactive for this definition ID."); return; }
-                if (!Enum.IsDefined(condition.Operator)) { Error("Unknown condition operator."); return; }
-                if (!AttributeRules.IsValid(field with { Required = true, Minimum = null, Maximum = null, MaxLength = null }, condition.Value)) Error($"Invalid condition value for {field.Key}.");
-                if (condition.Operator is not (ConditionOperator.Equals or ConditionOperator.NotEquals) && field.Type is not (AttributeType.Decimal or AttributeType.Integer or AttributeType.Date)) Error("Ordered comparisons require a number or date.");
-                if (condition.OrGroup is < 1) Error("orGroup must be a positive number.");
-            }
-            // "conditions": entries sharing an orGroup are OR-ed; everything else is AND-ed.
-            const int MaxRuleConditions = 20;
-            void RuleConditionsValid(AttributeCondition[]? conditions)
-            {
-                if (conditions is not { Length: > 0 }) { Error("A rule needs \"conditions\" with at least one condition."); return; }
-                if (conditions.Length > MaxRuleConditions) { Error($"A rule can have at most {MaxRuleConditions} conditions."); return; }
-                foreach (var condition in conditions) ConditionValid(condition);
-            }
-            // Every stage lists its own task buttons; there are no required or built-in keys.
-            void ActionsValid(StageDefinition stage)
-            {
-                var actions = stage.Actions;
-                if (actions is not { Length: > 0 } || actions.Any(x => x is null)) { Error($"Stage '{stage.Key}' needs at least one action in \"actions\"."); return; }
-                if (actions.Select(x => x.Key).Distinct(StringComparer.OrdinalIgnoreCase).Count() != actions.Length) Error($"Duplicate action keys in '{stage.Key}'.");
-                foreach (var action in actions)
-                {
-                    if (string.IsNullOrEmpty(action.Key) || !System.Text.RegularExpressions.Regex.IsMatch(action.Key, "^[A-Z][A-Z0-9_]{0,39}$"))
-                    { Error($"Action key '{action.Key}' in '{stage.Key}' must be UPPER_CASE letters, digits or underscores (max 40)."); continue; }
-                    if (action.Key == TaskActionKeys.Resubmit) { Error($"'{TaskActionKeys.Resubmit}' is reserved for correction tasks."); continue; }
-                    if (!DestinationValid(action.Destination)) Error($"Invalid destination for action '{action.Key}' in '{stage.Key}'.");
-                    foreach (var rule in action.Rules ?? [])
-                    {
-                        if (rule is null) { Error("Null route rule."); continue; }
-                        RuleConditionsValid(rule.Conditions);
-                        if (!DestinationValid(rule.Destination)) Error($"Invalid conditional destination for action '{action.Key}' in '{stage.Key}'.");
-                    }
-                }
-            }
-            foreach (var stage in setup.Stages)
-            {
-                if (!Key(stage.Key) || string.IsNullOrWhiteSpace(stage.Title)) Error("A valid stage key/title is required.");
-                var viewerStages = new HashSet<string>(StringComparer.Ordinal);
-                foreach (var key in stage.ViewableByStages ?? [])
-                    if (string.IsNullOrWhiteSpace(key) || key == stage.Key || !viewerStages.Add(key) || !setup.Stages.Any(other => other.Key == key))
-                        Error($"Invalid viewer stage '{key}' on '{stage.Key}'. Use distinct keys of other stages.");
-                ActionsValid(stage);
-                var assignment = stage.Assignment;
-                if (assignment is null || assignment.Members is null || !Enum.IsDefined(assignment.Policy)) { Error("An assignment policy and members array are required."); continue; }
-                if (assignment.Members.Distinct().Count() != assignment.Members.Length) Error("Duplicate candidate members.");
-                foreach (var member in assignment.Members)
-                    if (string.IsNullOrWhiteSpace(member) || !await users.HasRoleAsync(member, "Approver", ct)) Error($"Unknown/ineligible approver {member}.");
-                if (assignment.Policy == AssignmentPolicy.Specific)
-                {
-                    // userId may be omitted when there is exactly one member; that member is the owner.
-                    if (assignment.SpecificOwner is null) Error($"Specific assignment in '{stage.Key}' needs userId when it has more than one member.");
-                    else if (!assignment.Members.Contains(assignment.SpecificOwner)) Error("Specific assignee must be a candidate.");
-                }
-                if (assignment.Policy == AssignmentPolicy.Condition && (assignment.Rules is null || assignment.Rules.Length == 0)) Error("Conditional assignment requires ordered rules.");
-                foreach (var rule in assignment.Rules ?? [])
-                {
-                    if (rule is null) { Error("Null assignment rule."); continue; }
-                    RuleConditionsValid(rule.Conditions);
-                    if (!assignment.Members.Contains(rule.UserId)) Error("Rule assignee must be a candidate.");
-                }
-            }
+            RuleFor(x => x).Custom(CheckStageKeys);
+            RuleFor(x => x).Custom(CheckActions);
+            RuleFor(x => x).Custom(CheckParallelGroups);
+            RuleFor(x => x).Custom(CheckViewers);
+            RuleFor(x => x).CustomAsync(CheckAssignmentsAsync);
+            RuleFor(x => x).CustomAsync(CheckSupervisorsAsync);
         });
     }
+
+    private static bool HasUsableStages(WorkflowSetup setup) =>
+        setup.Stages is { Length: > 0 } && setup.Stages.All(stage => stage is not null);
+
+    private static void CheckStageKeys(WorkflowSetup setup, ValidationContext<WorkflowSetup> context)
+    {
+        foreach (var stage in setup.Stages)
+        {
+            if (stage.Key is null || !StageKeyPattern().IsMatch(stage.Key))
+                context.AddFailure($"Stage key '{stage.Key}' must start with a letter and use letters, digits or '_' (max 64).");
+            if (string.IsNullOrWhiteSpace(stage.Title))
+                context.AddFailure($"Stage '{stage.Key}' needs a title.");
+        }
+
+        var duplicates = setup.Stages.GroupBy(stage => stage.Key).Where(group => group.Count() > 1).Select(group => group.Key);
+        foreach (var key in duplicates)
+            context.AddFailure($"Stage key '{key}' is used more than once.");
+
+        if (setup.FindStage(setup.StartStage) is null)
+            context.AddFailure($"Start stage '{setup.StartStage}' does not exist.");
+    }
+
+    private static void CheckActions(WorkflowSetup setup, ValidationContext<WorkflowSetup> context)
+    {
+        foreach (var stage in setup.Stages)
+        {
+            if (stage.Actions is not { Length: > 0 } || stage.Actions.Any(action => action is null))
+            {
+                context.AddFailure($"Stage '{stage.Key}' needs at least one action in \"actions\".");
+                continue;
+            }
+
+            if (stage.Actions.DistinctBy(action => action.Key, StringComparer.OrdinalIgnoreCase).Count() != stage.Actions.Length)
+                context.AddFailure($"Stage '{stage.Key}' has duplicate action keys.");
+
+            foreach (var action in stage.Actions)
+            {
+                if (action.Key is null || !ActionKeyPattern().IsMatch(action.Key))
+                    context.AddFailure($"Action key '{action.Key}' in '{stage.Key}' must be UPPER_CASE letters, digits or '_' (max 40).");
+                else if (action.Key == TaskActionKeys.Resubmit)
+                    context.AddFailure($"'{TaskActionKeys.Resubmit}' is reserved for correction tasks.");
+
+                if (!IsValidDestination(setup, action.Destination))
+                    context.AddFailure($"Action '{action.Key}' in '{stage.Key}' has an invalid destination.");
+            }
+        }
+    }
+
+    /// <summary>Stage and Correction need an existing stage that is not inside a parallel group; Approved/Rejected need none.</summary>
+    private static bool IsValidDestination(WorkflowSetup setup, Destination? destination)
+    {
+        if (destination is null || !Enum.IsDefined(destination.Kind)) return false;
+
+        if (destination.Kind is DestinationKind.Approved or DestinationKind.Rejected)
+            return string.IsNullOrEmpty(destination.StageKey);
+
+        var target = destination.StageKey is null ? null : setup.FindStage(destination.StageKey);
+        return target is not null && !ParallelMemberKeys(setup).Contains(target.Key);
+    }
+
+    /// <summary>
+    /// A parallel group is one "entry" stage (with ParallelWith) plus its member stages. All of them open together,
+    /// the first APPROVE continues and the group is rejected only when every task rejects.
+    /// </summary>
+    private static void CheckParallelGroups(WorkflowSetup setup, ValidationContext<WorkflowSetup> context)
+    {
+        var seenMembers = new HashSet<string>();
+        foreach (var entry in setup.Stages.Where(stage => stage.IsParallelGroup))
+        {
+            if (entry.ParallelWith!.Length == 0)
+                context.AddFailure($"Parallel stage '{entry.Key}' must name at least one other stage.");
+            if (!OffersOnlyApproveAndReject(entry))
+                context.AddFailure($"Parallel stage '{entry.Key}' must offer exactly the APPROVE and REJECT actions.");
+
+            foreach (var memberKey in entry.ParallelWith)
+            {
+                var member = setup.FindStage(memberKey);
+                if (member is null || member == entry)
+                {
+                    context.AddFailure($"Parallel stage '{memberKey}' in '{entry.Key}' does not exist.");
+                    continue;
+                }
+                if (!seenMembers.Add(memberKey))
+                    context.AddFailure($"Stage '{memberKey}' is in more than one parallel group.");
+                if (member.IsParallelGroup)
+                    context.AddFailure($"Stage '{memberKey}' is a member and cannot start its own group.");
+                if (!OffersOnlyApproveAndReject(member))
+                    context.AddFailure($"Parallel stage '{memberKey}' must offer exactly the APPROVE and REJECT actions.");
+                else if (!SameDestinations(entry, member))
+                    context.AddFailure($"Parallel stage '{memberKey}' must use the same destinations as '{entry.Key}'.");
+            }
+        }
+
+        if (seenMembers.Contains(setup.StartStage))
+            context.AddFailure("Start at the entry stage of a parallel group, not at a member.");
+    }
+
+    private static bool OffersOnlyApproveAndReject(StageDefinition stage) =>
+        (stage.Actions ?? []).Select(action => action.Key).Order().SequenceEqual([TaskActionKeys.Approve, TaskActionKeys.Reject]);
+
+    private static bool SameDestinations(StageDefinition a, StageDefinition b) =>
+        a.Actions!.All(action => b.Actions!.Single(other => other.Key == action.Key).Destination == action.Destination);
+
+    private static HashSet<string> ParallelMemberKeys(WorkflowSetup setup) =>
+        setup.Stages.SelectMany(stage => stage.ParallelWith ?? []).ToHashSet();
+
+    private static void CheckViewers(WorkflowSetup setup, ValidationContext<WorkflowSetup> context)
+    {
+        foreach (var stage in setup.Stages)
+        {
+            var viewers = stage.ViewableByStages ?? [];
+            if (viewers.Distinct().Count() != viewers.Length)
+                context.AddFailure($"Stage '{stage.Key}' lists a viewer stage more than once.");
+            foreach (var key in viewers)
+                if (key == stage.Key || setup.FindStage(key) is null)
+                    context.AddFailure($"Viewer stage '{key}' on '{stage.Key}' must be another existing stage.");
+        }
+    }
+
+    private async Task CheckAssignmentsAsync(WorkflowSetup setup, ValidationContext<WorkflowSetup> context, CancellationToken ct)
+    {
+        foreach (var stage in setup.Stages)
+        {
+            var assignment = stage.Assignment;
+            if (assignment?.Members is null || !Enum.IsDefined(assignment.Policy))
+            {
+                context.AddFailure($"Stage '{stage.Key}' needs an assignment policy and a members array.");
+                continue;
+            }
+
+            if (assignment.Members.Distinct().Count() != assignment.Members.Length)
+                context.AddFailure($"Stage '{stage.Key}' lists a member more than once.");
+
+            foreach (var member in assignment.Members)
+                if (string.IsNullOrWhiteSpace(member) || !await _users.HasRoleAsync(member, ApproverRole, ct))
+                    context.AddFailure($"Member '{member}' of '{stage.Key}' is unknown or lacks the {ApproverRole} role.");
+
+            if (assignment.Policy == AssignmentPolicy.Specific)
+            {
+                if (assignment.SpecificOwner is null)
+                    context.AddFailure($"Specific assignment in '{stage.Key}' needs user_id when it has more than one member.");
+                else if (!assignment.Members.Contains(assignment.SpecificOwner))
+                    context.AddFailure($"user_id of '{stage.Key}' must be one of its members.");
+            }
+        }
+    }
+
+    private async Task CheckSupervisorsAsync(WorkflowSetup setup, ValidationContext<WorkflowSetup> context, CancellationToken ct)
+    {
+        var supervisors = setup.Supervisors ?? [];
+        if (supervisors.Distinct().Count() != supervisors.Length)
+            context.AddFailure("A supervisor is listed more than once.");
+        foreach (var supervisor in supervisors)
+            if (string.IsNullOrWhiteSpace(supervisor) || !await _users.HasRoleAsync(supervisor, WorkflowSetup.SupervisorRole, ct))
+                context.AddFailure($"Supervisor '{supervisor}' is unknown or lacks the {WorkflowSetup.SupervisorRole} role.");
+    }
+
+    [GeneratedRegex("^[A-Za-z][A-Za-z0-9_]{0,63}$")]
+    private static partial Regex StageKeyPattern();
+
+    [GeneratedRegex("^[A-Z][A-Z0-9_]{0,39}$")]
+    private static partial Regex ActionKeyPattern();
 }

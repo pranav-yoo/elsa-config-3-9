@@ -6,8 +6,12 @@ using Elsa.Workflows.Attributes;
 using Elsa.Workflows.Models;
 using UserTask = Elsa.UserTasks.Activities.UserTask;
 
-namespace IlWorkflow.Api.Workflows;
+namespace IlWorkflow.Infrastructure.Workflows;
 
+/// <summary>
+/// A parallel group: opens one <see cref="TicketReview"/> task per stage at the same time.
+/// The first APPROVE wins (the other open tasks are cancelled). The group is rejected only when every task rejects.
+/// </summary>
 [Activity("Tickets", "Tickets", "Runs parallel reviews and continues on the first approval.")]
 [FlowNode(StagePorts.Approve, StagePorts.Reject)]
 public sealed class ParallelTicketReview : Activity
@@ -19,8 +23,8 @@ public sealed class ParallelTicketReview : Activity
 
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
-        context.WorkflowExecutionContext.Output["currentStage"] = StageKey.Get(context);
-        context.WorkflowExecutionContext.Output["ticketOutcome"] = TicketOutcome.InReview.ToString();
+        context.WorkflowExecutionContext.Output[TicketState.CurrentStage] = StageKey.Get(context);
+        TicketState.SetOutcome(context.WorkflowExecutionContext, TicketOutcome.InReview);
         await context.ScheduleActivities(Branches, OnBranchCompletedAsync);
     }
 
@@ -39,7 +43,7 @@ public sealed class ParallelTicketReview : Activity
         else if (!string.Equals(stimulus.ActionKey, TaskActionKeys.Approve, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Unknown parallel review decision.");
 
-        context.WorkflowExecutionContext.Output["lastDecision"] = rejected ? TaskActionKeys.Reject : TaskActionKeys.Approve;
+        context.WorkflowExecutionContext.Output[TicketState.LastDecision] = rejected ? TaskActionKeys.Reject : TaskActionKeys.Approve;
         // Completing a composite cancels its remaining active children and removes their bookmarks.
         await context.CompleteActivityWithOutcomesAsync(rejected ? StagePorts.Reject : StagePorts.Approve);
     }
