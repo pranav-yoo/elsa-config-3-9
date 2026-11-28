@@ -6,7 +6,7 @@ namespace ilworkflow.Tests;
 /// <summary>
 /// Executes the actual MAIN SEQUENCE of the repository's .http files without logging tokens
 /// (ports of Tests/VerifyConfiguredRequests.py and Tests/VerifyHttpSequence.py).
-/// Requires accounts provisioned by Authentication.http or <see cref="ConfiguredWorkflowTests"/>.
+/// Requires accounts provisioned by Authentication.http.
 /// </summary>
 public sealed class HttpFileSequenceTests(ITestOutputHelper output) : IDisposable
 {
