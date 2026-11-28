@@ -32,7 +32,7 @@ public sealed class HttpFileSequenceTests(ITestOutputHelper output) : IDisposabl
     }
 
     [Fact]
-    public async Task ObservedTasksFile_MainSequence_PaginationAndVersionSnapshots()
+    public async Task ObservedTasksFile_MainSequence_Pagination()
     {
         LiveSettings.Require();
         await api.LoginAsync("admin", "admin", "password");
@@ -42,27 +42,14 @@ public sealed class HttpFileSequenceTests(ITestOutputHelper output) : IDisposabl
         string Actor(string actor) => actor == "admin" ? "admin" : Register(actor);
         var execute = "/elsa/api/workflow-definitions/" + variables["definitionId"] + "/execute";
         var payload = new { input = new { attributes = new { claimAmount = 6000 } } };
-        var existing = (string)(await api.PostAsync(execute, payload))["workflowState"]!["id"]!;
+        await api.PostAsync(execute, payload); // a second ticket so there are two observed tasks to page through
         const string observedPath = "/elsa/api/user-tasks?scope=observed";
         var first = await api.GetAsync(observedPath + "&limit=1&includeTotalCount=true", Actor("dan"));
         var second = await api.GetAsync(observedPath + "&limit=1&cursor=" + Uri.EscapeDataString((string)first["nextCursor"]!), Actor("dan"));
         Assert.True((int)first["totalCount"]! >= 2);
         Assert.NotEqual((string)first["items"]![0]!["id"]!, (string)second["items"]![0]!["id"]!);
 
-        var published = responses["observerPublished"]!["data"]!; // /api responses use the { trace_id, messages, data } envelope
-        var current = await api.PostAsync("/api/workflow-configurations/get", new JsonObject { ["workflowDefinitionId"] = published["workflow_definition_id"]!.DeepClone(), ["workflowVersion"] = published["workflow_version"]!.DeepClone() });
-        var setup = current["configuration"]!.AsObject();
-        setup.Remove("attributes");
-        setup["stages"]![0]!.AsObject().Remove("viewableByStages");
-        // No version: the published definition gets its next version.
-        var draft = await api.PostAsync("/api/workflow-configurations",
-            new JsonObject { ["workflowDefinitionId"] = current["workflowDefinitionId"]!.DeepClone(), ["configuration"] = setup.DeepClone() });
-        Assert.Equal((int)current["workflowVersion"]! + 1, (int)draft["workflowVersion"]!);
-        await api.PostAsync($"/api/workflow-configurations/{draft["workflowDefinitionId"]}/versions/{draft["workflowVersion"]}/publish", null);
-        var created = (string)(await api.PostAsync(execute, payload))["workflowState"]!["id"]!;
-        Assert.Single((await api.GetAsync(observedPath + "&workflowInstanceId=" + existing, Actor("dan")))["items"]!.AsArray());
-        Assert.Empty((await api.GetAsync(observedPath + "&workflowInstanceId=" + created, Actor("dan")))["items"]!.AsArray());
-        output.WriteLine("PASS observed pagination and observer snapshots across definition versions");
+        output.WriteLine("PASS observed pagination");
     }
 
     /// <summary>

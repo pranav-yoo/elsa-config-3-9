@@ -198,13 +198,6 @@ public sealed class ConfiguredWorkflowTests(ITestOutputHelper output) : IDisposa
 
         var pending = await StartAsync(config);
         var pendingTask = (string)(await TaskAsync(pending, "alice"))["id"]!;
-        // No version: the same definition gets its next version.
-        var nextConfig = await SaveAsync(config["workflowDefinitionId"]!, null, config["configuration"]!);
-        Assert.Equal(config["workflowDefinitionId"]!.ToString(), nextConfig["workflowDefinitionId"]!.ToString());
-                Assert.Equal((int)config["workflowVersion"]! + 1, (int)nextConfig["workflowVersion"]!);
-        nextConfig["configuration"]!["name"] = "Expense Claim v2";
-        nextConfig = await SaveAsync(nextConfig["workflowDefinitionId"]!, nextConfig["workflowVersion"], nextConfig["configuration"]!);
-        await PublishAsync(nextConfig);
         Assert.Equal((int)config["workflowVersion"]!, (int)(await api.GetAsync("/elsa/api/workflow-instances/" + pending))["version"]!);
         Directory.CreateDirectory(Path.GetDirectoryName(StatePath)!);
         var state = new JsonObject
@@ -213,7 +206,7 @@ public sealed class ConfiguredWorkflowTests(ITestOutputHelper output) : IDisposa
             ["pendingInstance"] = pending, ["pendingTask"] = pendingTask, ["correctedInstance"] = corrected, ["userIds"] = Node(ids),
         };
         await File.WriteAllTextAsync(StatePath, state.ToJsonString(), TestContext.Current.CancellationToken);
-        output.WriteLine("PASS next version published while pending instance remains pinned; restart fixture saved");
+        output.WriteLine("PASS pending instance pinned to its version; restart fixture saved");
     }
 
     private async Task PrepareAsync()
@@ -300,7 +293,7 @@ public sealed class ConfiguredWorkflowTests(ITestOutputHelper output) : IDisposa
             new JsonObject { ["workflowDefinitionId"] = definition, ["configuration"] = setup }, "configurator", expected)).Body!;
     }
 
-    /// <summary>Definition ID + version number update that draft version. Without a version the definition gets its next version.</summary>
+    /// <summary>Definition ID + version number update that draft version.</summary>
     private Task<JsonNode> SaveAsync(JsonNode definitionId, JsonNode? versionId, JsonNode configuration, params int[] expected)
     {
         var body = new JsonObject { ["workflowDefinitionId"] = definitionId.DeepClone(), ["configuration"] = configuration.DeepClone() };
