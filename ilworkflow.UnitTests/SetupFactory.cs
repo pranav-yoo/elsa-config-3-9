@@ -7,8 +7,8 @@ public static class SetupFactory
         new(key, null, new Destination(kind, stage), reason);
 
     public static StageDefinition Stage(string key, string[] members, StageAction[] actions, AssignmentPolicy policy = AssignmentPolicy.Bucket,
-        string[]? parallelWith = null, string[]? viewers = null, string? userId = null) =>
-        new(key, key + " review", new AssignmentDefinition(policy, members, userId), parallelWith, viewers, actions);
+        string[]? parallelWith = null, string? userId = null) =>
+        new(key, key + " review", new AssignmentDefinition(policy, members, userId), parallelWith, actions);
 
     /// <summary>A -> B -> Approved. A can also reject to a correction.</summary>
     public static WorkflowSetup TwoStages() => new("Expense", "A",

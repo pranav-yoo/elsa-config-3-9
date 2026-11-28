@@ -10,8 +10,8 @@ namespace ilworkflow.Tests;
 /// </summary>
 public sealed class HttpFileSequenceTests(ITestOutputHelper output) : IDisposable
 {
-    private static readonly string[] TaskLists = ["aTasks", "bTasks", "cTasks", "dTasks", "observedTasks", "observedDanTask"];
-    private static readonly string[] FinishedNames = ["finishedInstance", "observedFinished"];
+    private static readonly string[] TaskLists = ["aTasks", "bTasks", "cTasks", "dTasks"];
+    private static readonly string[] FinishedNames = ["finishedInstance"];
 
     private readonly LiveApi api = new(TimeSpan.FromSeconds(30));
     private readonly Dictionary<string, JsonNode?> responses = new();
@@ -29,27 +29,6 @@ public sealed class HttpFileSequenceTests(ITestOutputHelper output) : IDisposabl
             variables[name + "Id"] = users.First(u => (string)u!["name"]! == "configured-" + name)!["id"]!.ToString();
         var count = await RunAsync(["Workflow-Configuration.http", "Ticket-Workflow.http"]);
         output.WriteLine($"PASS {count} actual HTTP-file requests; named response IDs/revisions and status filters verified");
-    }
-
-    [Fact]
-    public async Task ObservedTasksFile_MainSequence_Pagination()
-    {
-        LiveSettings.Require();
-        await api.LoginAsync("admin", "admin", "password");
-        var count = await RunAsync(["Observed-Tasks.http"]);
-        output.WriteLine($"PASS {count} actual HTTP-file requests; named response IDs/revisions and status filters verified");
-
-        string Actor(string actor) => actor == "admin" ? "admin" : Register(actor);
-        var execute = "/elsa/api/workflow-definitions/" + variables["definitionId"] + "/execute";
-        var payload = new { input = new { attributes = new { claimAmount = 6000 } } };
-        await api.PostAsync(execute, payload); // a second ticket so there are two observed tasks to page through
-        const string observedPath = "/elsa/api/user-tasks?scope=observed";
-        var first = await api.GetAsync(observedPath + "&limit=1&includeTotalCount=true", Actor("dan"));
-        var second = await api.GetAsync(observedPath + "&limit=1&cursor=" + Uri.EscapeDataString((string)first["nextCursor"]!), Actor("dan"));
-        Assert.True((int)first["totalCount"]! >= 2);
-        Assert.NotEqual((string)first["items"]![0]!["id"]!, (string)second["items"]![0]!["id"]!);
-
-        output.WriteLine("PASS observed pagination");
     }
 
     /// <summary>
@@ -99,7 +78,7 @@ public sealed class HttpFileSequenceTests(ITestOutputHelper output) : IDisposabl
             var file = new HttpFile(Path.Combine(LiveSettings.RepoRoot, filename));
             foreach (var (key, value) in file.Variables) variables[key] = value;
             variables["baseUrl"] = api.BaseUrl;
-            if (filename is "Workflow-Configuration.http" or "Observed-Tasks.http") variables["definitionId"] = "example-" + Hex();
+            if (filename == "Workflow-Configuration.http") variables["definitionId"] = "example-" + Hex();
             if (filename == "Ticket-Workflow.http") variables["definitionId"] = (string)responses["publishConfiguration"]!["data"]!["workflow_definition_id"]!;
 
             foreach (var request in file.Requests)
@@ -121,22 +100,6 @@ public sealed class HttpFileSequenceTests(ITestOutputHelper output) : IDisposabl
                 count++;
 
                 if (FinishedNames.Contains(name)) Assert.Equal("Approved", (string)result!["workflowState"]!["output"]!["ticketOutcome"]!);
-                if (name == "observedTasks")
-                {
-                    Assert.Equal(1, (int)result!["totalCount"]!);
-                    Assert.Equal("C - Clara review", (string)result["items"]![0]!["title"]!);
-                    Assert.Empty(result["items"]![0]!["allowedActions"]!.AsArray());
-                }
-                if (name is "observerAssigned" or "observerAvailable" or "outsiderObserved") Assert.Empty(result!["items"]!.AsArray());
-                if (name == "outsiderObserved") Assert.Equal(0, (int)result!["totalCount"]!);
-                if (name == "observedDetail")
-                {
-                    Assert.Equal(6000m, (decimal)result!["data"]!["claimAmount"]!);
-                    Assert.True((bool)result["disclosure"]!["canViewHistory"]!);
-                    Assert.Empty(result["allowedActions"]!.AsArray());
-                }
-                if (name == "observedEvents")
-                    Assert.True(result!["items"]!.AsArray().Any(e => (string)e!["kind"]! == "Created"), result.ToJsonString());
                 output.WriteLine($"PASS {filename}: {name} HTTP {status}");
             }
         }

@@ -31,7 +31,7 @@ ilworkflow.Core/
 ilworkflow.Infrastructure/
   Workflows/                WorkflowDefinitionBuilder (setup -> Elsa flowchart), Activities/, TicketFormProvider
   Configuration/            WorkflowConfigurationService (save / validate / publish)
-  Tasks/                    TaskService, ObservedUserTasks
+  Tasks/                    TaskService
   Persistence/              ApplicationDbContext, Configurations/ (table mapping), Migrations/, UserTasks/
   Authentication/ Authorization/ Identity/
   DependencyInjection.cs    AddInfrastructure(): Elsa engine, database, task services, identity
@@ -80,7 +80,7 @@ Run one request at a time (VS Code REST Client) and copy the IDs between files.
 1. [Authentication.http](Authentication.http): roles, users and login. Sample password `Password123!`.
 2. [Workflow-Configuration.http](Workflow-Configuration.http): create, update, validate and publish a configuration.
 3. [Ticket-Workflow.http](Ticket-Workflow.http): submit a ticket, approve, reject, correct and resubmit.
-4. [Parallel-Approvals.http](Parallel-Approvals.http) and [Observed-Tasks.http](Observed-Tasks.http).
+4. [Parallel-Approvals.http](Parallel-Approvals.http).
 
 ## The configuration request
 
@@ -104,7 +104,6 @@ Run one request at a time (VS Code REST Client) and copy the IDs between files.
         "key": "A",
         "title": "Initial review",
         "assignment": { "policy": "Bucket", "members": ["<userId>", "<userId>"] },
-        "viewable_by_stages": ["B"],
         "actions": [
           { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Stage", "stage_key": "B" } },
           { "key": "REJECT", "label": "Reject", "destination": { "kind": "Correction", "stage_key": "A" }, "require_reason": true }
@@ -142,9 +141,7 @@ Published versions never change; running tickets keep the version they started w
   - `Specific`: one owner. Set `user_id` when there is more than one member.
 - **`parallel_with`**: `["C"]` on stage B opens B and C together. The first APPROVE continues, the group is rejected only when every
   task rejects. Every stage of a group offers exactly APPROVE and REJECT with the same destinations.
-- **`viewable_by_stages`**: members of those stages can read (not act on) this stage's task: `GET /api/tasks?scope=observed`.
-- **`supervisors`**: users with role `workflow_supervisor` who see and can reassign every task of this workflow:
-  `GET /api/tasks?scope=supervised`.
+- **`supervisors`**: users with role `workflow_supervisor` who can read every instance of this workflow.
 
 Members, owners and supervisors are Elsa user IDs (returned when the user is created), not usernames. Members need the `Approver` role.
 
@@ -157,7 +154,7 @@ or 409 (the task changed: reload and retry). Invalid task data returns Elsa's 42
 ## Verify
 
 `Tests/smoke_workflow.py` runs the full flow against a live API (configuration, publish, custom action, correction, rejection,
-parallel group, observed and supervised lists):
+parallel group):
 
 ```powershell
 python Tests/smoke_workflow.py --attributes

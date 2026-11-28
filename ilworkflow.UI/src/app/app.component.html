@@ -10,7 +10,7 @@
     <p class="muted">Select a user to load their tasks.</p>
   } @else {
     <div class="tabs">
-      @for (s of visibleScopes(); track s) {
+      @for (s of scopes; track s) {
         <button [class.active]="scope() === s" (click)="setScope(s)">{{ s }}</button>
       }
       <button (click)="load()">↻ Refresh</button>

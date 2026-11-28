@@ -27,7 +27,6 @@ public sealed partial class WorkflowConfigurationValidator : AbstractValidator<W
             RuleFor(x => x).Custom(CheckStageKeys);
             RuleFor(x => x).Custom(CheckActions);
             RuleFor(x => x).Custom(CheckParallelGroups);
-            RuleFor(x => x).Custom(CheckViewers);
             RuleFor(x => x).CustomAsync(CheckAssignmentsAsync);
             RuleFor(x => x).CustomAsync(CheckSupervisorsAsync);
         });
@@ -137,19 +136,6 @@ public sealed partial class WorkflowConfigurationValidator : AbstractValidator<W
 
     private static HashSet<string> ParallelMemberKeys(WorkflowSetup setup) =>
         setup.Stages.SelectMany(stage => stage.ParallelWith ?? []).ToHashSet();
-
-    private static void CheckViewers(WorkflowSetup setup, ValidationContext<WorkflowSetup> context)
-    {
-        foreach (var stage in setup.Stages)
-        {
-            var viewers = stage.ViewableByStages ?? [];
-            if (viewers.Distinct().Count() != viewers.Length)
-                context.AddFailure($"Stage '{stage.Key}' lists a viewer stage more than once.");
-            foreach (var key in viewers)
-                if (key == stage.Key || setup.FindStage(key) is null)
-                    context.AddFailure($"Viewer stage '{key}' on '{stage.Key}' must be another existing stage.");
-        }
-    }
 
     private async Task CheckAssignmentsAsync(WorkflowSetup setup, ValidationContext<WorkflowSetup> context, CancellationToken ct)
     {

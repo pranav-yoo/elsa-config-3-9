@@ -88,8 +88,8 @@ Content-Type: application/json
 
 
 ### Create role workflow_supervisor IF MISSING
-# For users listed in a workflow's "supervisors": they see and reassign tasks of THOSE workflows only
-# (GET /elsa/api/user-tasks?scope=supervised). No supervise permission, so no global access.
+# For users listed in a workflow's "supervisors": they can read instances of THOSE workflows only.
+# No supervise permission, so no global access.
 # @name createRoleWorkflowSupervisor
 POST {{baseUrl}}/elsa/api/identity/roles
 Authorization: Bearer {{adminLogin.response.body.$.accessToken}}

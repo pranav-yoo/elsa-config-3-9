@@ -87,22 +87,17 @@ public static class DependencyInjection
         services.AddDbContext<ApplicationDbContext>(options => options.UseNpgsql(connectionString,
             provider => provider.MigrationsHistoryTable("__EFMigrationsHistory", "Application")));
 
-    /// <summary>Everything around Elsa user tasks: validation of completions, observer lists and parallel-task locking.</summary>
+    /// <summary>Everything around Elsa user tasks: validation of completions, .</summary>
     private static void AddTaskServices(this IServiceCollection services, bool swaggerPreview)
     {
         // Elsa 3.9's defaults capture the root provider, but both services need scoped runtime services.
         services.AddScoped<IUserTaskNotificationSink, DefaultUserTaskNotificationSink>();
-        if (swaggerPreview) services.AddScoped<IUserTaskWorkflowResumer, DefaultUserTaskWorkflowResumer>();
+        services.AddScoped<IUserTaskWorkflowResumer, DefaultUserTaskWorkflowResumer>();
 
         services.AddScoped<TaskService>();
         services.AddSingleton<IUserTaskFormProvider, TicketFormProvider>();
         if (swaggerPreview) return;
 
-        services.AddSingleton<IUserTaskAccessPolicy, ObservedTaskAccess>();
-        services.AddScoped<ObservedUserTasks>();
-        services.AddScoped<ParallelTaskCommands>();
-        services.AddScoped<DefaultUserTaskWorkflowResumer>();
-        services.AddScoped<IUserTaskWorkflowResumer, ParallelTaskWorkflowResumer>();
         // Elsa 3.9 PostgreSQL compatibility fixes for the user-task tables.
         services.AddScoped<Elsa.Persistence.EFCore.IEntityModelCreatingHandler, UserTaskPostgreSqlModel>();
         services.AddScoped<IUserTaskRepository, UserTaskNullableJsonRepository>();

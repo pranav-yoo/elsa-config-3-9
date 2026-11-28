@@ -31,7 +31,7 @@ This repo folder (`ilworkflow.UI/`) already contains a working implementation. R
 ## Task API (`/api/tasks`, all properties and query names are snake_case)
 | Call | Notes |
 |---|---|
-| `GET /api/tasks?scope=&status=&include_total_count=true` | Returns `{items:[...]}`. scope: assigned, available, observed, supervised, history, all |
+| `GET /api/tasks?scope=&status=&include_total_count=true` | Returns `{items:[...]}`. scope: assigned, available, history, all |
 | `GET /api/tasks/{id}` | Detail: `actions` (stage buttons), `allowed_actions`, `revision`, `data`, `form`, `workflow` |
 | `GET /api/tasks/{id}/events?limit=50` | History: `{items:[...]}` |
 | `POST /api/tasks/{id}/claim` | Body `{expected_revision, operation_id}` |
@@ -45,7 +45,7 @@ This repo folder (`ilworkflow.UI/`) already contains a working implementation. R
 - Example task keys after conversion: `id, title, summary, status, assignee{displayName}, workflowInstanceId, createdAt, revision, actions[{key,label}], allowedActions[], data, workflow{definitionName}`.
 
 ## Behaviour
-- **Tabs** (scope): assigned, available, observed, supervised, history, all. The `supervised` tab shows only for users with role `admin` or `administrator`. Switching to a user without it resets to assigned.
+- **Tabs** (scope): assigned, available, history, all.
 - **Status chips** (all tabs): Assigned, Available, Completing, Completed. A chip is sent as `&status=`. It overrides the tab default (assigned tab sends `Assigned`, available tab sends `Available`). Clicking the active chip clears it.
 - **Table columns**: name, status, data (JSON), assignee (show `assignee.displayName`, not the object), workflow instance, created, actions.
 - **Claim**: only on `Available` rows. After claiming, switch to the assigned tab.

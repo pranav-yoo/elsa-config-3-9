@@ -37,7 +37,6 @@ public sealed class TicketReview : Activity
     private const string CorrectionKey = "correction";
     private const string ParallelBranchKey = "parallelBranch";
     private const string TitleKey = "title";
-    private const string ObserverTagsKey = "observerTags";
 
     /// <summary>The setup snapshot this workflow version was built from (never the latest editable draft).</summary>
     [Input] public Input<string> ConfigurationJson { get; set; } = null!;
@@ -65,7 +64,6 @@ public sealed class TicketReview : Activity
             Assignee = new(ctx => GetAssignment(Owner(ctx)).Assignee is { } id ? TicketState.User(id) : null),
             // Snapshot: keep the candidate list as it was when the task was created.
             MembershipResolutionMode = new(UserTaskMembershipResolutionMode.Snapshot),
-            Tags = new(ctx => Core.Common.ConfigurationJson.Read<string[]>(Owner(ctx).GetProperty<string>(ObserverTagsKey)!)),
             TaskData = new(ctx => TicketState.GetAttributes(Owner(ctx).WorkflowExecutionContext)),
             ActionDefinitions = new(ctx => GetButtons(Owner(ctx))),
             // TicketFormProvider validates the completion data. The key tells it which stage's rules apply.
@@ -94,8 +92,6 @@ public sealed class TicketReview : Activity
         context.SetProperty(CorrectionKey, correction);
         context.SetProperty(ParallelBranchKey, parallelBranch);
         context.SetProperty(TitleKey, correction ? "Correct and resubmit: " + stage.Title : stage.Title);
-        // Stored as JSON text: the property bag keeps plain values most reliably.
-        context.SetProperty(ObserverTagsKey, Core.Common.ConfigurationJson.Write(await ObserverTagsAsync(context, setup, stage, correction)));
 
         // Parallel branches share one stage entry; ParallelTicketReview updates the stage for the whole group.
         if (!parallelBranch)
@@ -127,29 +123,6 @@ public sealed class TicketReview : Activity
         if (!context.GetProperty<bool>(ParallelBranchKey))
             workflow.Output[TicketState.LastDecision] = action.Key;
         await context.CompleteActivityWithOutcomesAsync(action.Key);
-    }
-
-    /// <summary>Members of the stages in ViewableByStages may read this task. Elsa stores that as task tags.</summary>
-    private static async Task<string[]> ObserverTagsAsync(ActivityExecutionContext context, WorkflowSetup setup, StageDefinition stage, bool correction)
-    {
-        var users = context.GetRequiredService<IApproverDirectory>();
-        var tags = new List<string>();
-
-        if (!correction)
-        {
-            var viewerStages = stage.ViewableByStages ?? [];
-            var viewers = setup.Stages.Where(other => viewerStages.Contains(other.Key)).SelectMany(other => other.Assignment.Members).Distinct();
-            foreach (var viewer in viewers)
-                if (await users.HasRoleAsync(viewer, WorkflowConfigurationValidator.ApproverRole, context.CancellationToken))
-                    tags.Add(ObservedTaskAccess.TagFor(TicketState.User(viewer)));
-        }
-
-        // Workflow supervisors see every task of this workflow, including corrections.
-        foreach (var supervisor in setup.Supervisors ?? [])
-            if (await users.HasRoleAsync(supervisor, WorkflowSetup.SupervisorRole, context.CancellationToken))
-                tags.Add(ObservedTaskAccess.SupervisorTagFor(TicketState.User(supervisor)));
-
-        return [.. tags];
     }
 
     private static ActivityExecutionContext Owner(ExpressionExecutionContext context) =>

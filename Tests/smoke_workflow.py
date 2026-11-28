@@ -133,7 +133,7 @@ setup = {
     "stages": [
         stage("A", "Bucket", ["alice", "amy"], [action("APPROVE", "Stage", "B"), action("REJECT", "Correction", "A", True)]),
         stage("B", "Bucket", ["bob"], [action("APPROVE", "Stage", "D"), action("REJECT", "Stage", "A", True),
-                                        action("REFER_UW", "Stage", "C", True)], viewable_by_stages=["D"]),
+                                        action("REFER_UW", "Stage", "C", True)]),
         stage("C", "Bucket", ["clara"], [action("APPROVE", "Stage", "D"), action("REJECT", "Rejected", reason=True)]),
         {**stage("D", "Specific", ["dan"], [action("APPROVE", "Approved"), action("REJECT", "Correction", "D", True)])},
     ],
@@ -156,8 +156,6 @@ claim(t["id"], "alice")
 check("A approve", complete(t["id"], "alice", "APPROVE", {"comment": "ok"})[0] in (200, 202))
 t = wait_task(inst, "bob")
 check("B auto-assigned (single member bucket)", t is not None)
-check("D member observes B task", any(x["id"] == t["id"] for x in call("GET", f"/api/tasks?scope=observed&workflow_instance_id={inst}", tok["dan"])[1]["data"]["items"]))
-check("supervisor sees B task", any(x["id"] == t["id"] for x in call("GET", f"/api/tasks?scope=supervised&workflow_instance_id={inst}", tok["sam"])[1]["data"]["items"]))
 r = complete(t["id"], "bob", "REFER_UW"); check("custom action without reason -> rejected", r[0] in (400, 422))
 r = complete(t["id"], "bob", "NOPE"); check("unknown action -> rejected", r[0] in (400, 422))
 check("B REFER_UW", complete(t["id"], "bob", "REFER_UW", {"reason": "big"})[0] in (200, 202))

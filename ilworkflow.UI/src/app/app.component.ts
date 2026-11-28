@@ -13,7 +13,7 @@ import { Decision, TaskDetailComponent } from './task-detail/task-detail.compone
 })
 export class AppComponent implements OnInit {
   private elsa = inject(ElsaService);
-  scopes: Scope[] = ['assigned', 'available', 'observed', 'supervised', 'history', 'all'];
+  scopes: Scope[] = ['assigned', 'available', 'history', 'all'];
   users = signal<ElsaUser[]>([]);
   selectedId = signal('');
   token = signal('');
@@ -21,12 +21,6 @@ export class AppComponent implements OnInit {
   statuses = ['Assigned', 'Available', 'Completing', 'Completed'];
   status = signal('');
 
-  /** The supervised tab is only for admins (server: admin role or user-tasks:supervise). */
-  isAdmin = computed(() => {
-    const u = this.users().find(x => x.id === this.selectedId());
-    return !!u?.roles?.some(r => ['admin', 'administrator'].includes(String(r).toLowerCase()));
-  });
-  visibleScopes = computed(() => this.scopes.filter(s => s !== 'supervised' || this.isAdmin()));
   tasks = signal<any[]>([]);
   loading = signal(false);
   busy = signal(false);
@@ -44,7 +38,6 @@ export class AppComponent implements OnInit {
     this.tasks.set([]);
     this.detail.set(null);
     this.token.set('');
-    if (this.scope() === 'supervised') this.scope.set('assigned');
     const user = this.users().find(u => u.id === id);
     if (!user) return;
     this.token.set(await this.elsa.createUserToken(user));

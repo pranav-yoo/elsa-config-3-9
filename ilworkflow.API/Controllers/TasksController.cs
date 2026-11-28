@@ -14,7 +14,7 @@ namespace IlWorkflow.API.Controllers;
 [Authorize]
 public sealed class TasksController(TaskService tasks) : ControllerBase
 {
-    /// <summary>scope: assigned | available | history | all | observed | supervised.</summary>
+    /// <summary>scope: assigned | available | history | all.</summary>
     [HttpGet]
     public async Task<IActionResult> List([FromQuery] string scope = "assigned", [FromQuery] string? status = null,
         [FromQuery(Name = "workflow_instance_id")] string? workflowInstanceId = null, [FromQuery] string? cursor = null, [FromQuery] int limit = 50,

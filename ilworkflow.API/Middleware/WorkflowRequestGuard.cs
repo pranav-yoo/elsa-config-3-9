@@ -20,7 +20,7 @@ namespace IlWorkflow.API.Middleware;
 /// <item>identity: local login/users, Development only.</item>
 /// <item>workflow-definitions/{id}/execute: validate the ticket and set the requester from the token.</item>
 /// <item>workflow-instances: ordinary users may read only instances they take part in.</item>
-/// <item>user-tasks: native task API, plus the extra "observed" and "supervised" list scopes.</item>
+/// <item>user-tasks: the native task API.</item>
 /// <item>everything else (definitions admin, etc.): supervisors only.</item>
 /// </list>
 /// Errors are thrown as exceptions and turned into responses by <see cref="ExceptionHandlingMiddleware"/>.
@@ -33,7 +33,7 @@ public sealed class WorkflowRequestGuard(RequestDelegate next, IConfiguration co
     private readonly bool _preview = environment.IsDevelopment() && configuration.GetValue<bool>("SwaggerPreview");
 
     public async Task InvokeAsync(HttpContext http, ApplicationDbContext db, IWorkflowDefinitionStore definitions,
-        WorkflowAccessService access, TaskService tasks)
+        WorkflowAccessService access)
     {
         var path = http.Request.Path.Value ?? "";
         var isAppApi = path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase);
@@ -70,7 +70,7 @@ public sealed class WorkflowRequestGuard(RequestDelegate next, IConfiguration co
                     break;
                 case "user-tasks":
                     RequireUser(http);
-                    if (await TryListExtraScopesAsync(http, parts, tasks)) return;
+                    RejectKeywordSearch(http);
                     break;
                 default:
                     var canAdminister = RequireUser(http);
@@ -80,13 +80,6 @@ public sealed class WorkflowRequestGuard(RequestDelegate next, IConfiguration co
                     break;
             }
 
-            // Task commands on parallel review tasks are run one at a time per workflow instance.
-            if (resource == "user-tasks" && parts.Length >= 3 && !IsRead(http)
-                && http.RequestServices.GetService<ParallelTaskCommands>() is { } parallel)
-            {
-                await parallel.RunCommandAsync(parts[1], parts[2] == "complete", http.User, () => next(http), http.RequestAborted);
-                return;
-            }
             await next(http);
         }
         finally
@@ -176,32 +169,11 @@ public sealed class WorkflowRequestGuard(RequestDelegate next, IConfiguration co
         if (!await access.CanReadInstanceAsync(parts[1], http.User, http.RequestAborted)) throw new ApiException(404, "Workflow instance not found.");
     }
 
-    /// <summary>
-    /// GET /elsa/api/user-tasks?scope=observed|supervised. Elsa's own scopes cannot express these,
-    /// so they are answered here by <see cref="TaskService"/> (the same code behind /api/tasks).
-    /// </summary>
-    private static async Task<bool> TryListExtraScopesAsync(HttpContext http, string[] parts, TaskService tasks)
+    /// <summary>Elsa 3.9's keyword task search cannot be translated to SQL by its PostgreSQL provider.</summary>
+    private static void RejectKeywordSearch(HttpContext http)
     {
-        if (parts.Length != 1 || !HttpMethods.IsGet(http.Request.Method)) return false;
-        var query = http.Request.Query;
-
-        // Elsa 3.9's keyword search cannot be translated to SQL by its PostgreSQL provider.
-        if (!string.IsNullOrWhiteSpace(query["search"]))
+        if (HttpMethods.IsGet(http.Request.Method) && !string.IsNullOrWhiteSpace(http.Request.Query["search"]))
             throw new ApiException(400, "Keyword task search is unavailable with PostgreSQL. Use scope, status or workflow filters.");
-
-        var scope = query["scope"].ToString();
-        if (!scope.Equals("observed", StringComparison.OrdinalIgnoreCase) && !scope.Equals("supervised", StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        var limit = 50;
-        if (query.TryGetValue("limit", out var rawLimit) && !int.TryParse(rawLimit, out limit)) throw new ApiException(400, "limit must be a number.");
-        var includeTotalCount = false;
-        if (query.TryGetValue("includeTotalCount", out var rawTotal) && !bool.TryParse(rawTotal, out includeTotalCount))
-            throw new ApiException(400, "includeTotalCount must be true or false.");
-
-        var request = new ListTasksRequest(scope, query["status"], query["workflowInstanceId"], query["cursor"], limit, includeTotalCount);
-        await http.Response.WriteAsJsonAsync(await tasks.ListAsync(http.User, request, http.RequestAborted), http.RequestAborted);
-        return true;
     }
 
     private static async Task<JsonObject> ReadJsonObjectAsync(HttpContext http)

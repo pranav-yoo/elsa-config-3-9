@@ -11,7 +11,7 @@ export const DEV_CONFIG = {
 };
 
 export interface ElsaUser { id: string; name: string; roles?: string[]; }
-export type Scope = 'assigned' | 'available' | 'observed' | 'supervised' | 'history' | 'all';
+export type Scope = 'assigned' | 'available' | 'history' | 'all';
 
 @Injectable({ providedIn: 'root' })
 export class ElsaService {
@@ -44,7 +44,7 @@ export class ElsaService {
     return `${unsigned}.${b64url(new Uint8Array(sig))}`;
   }
 
-  /** GET /api/tasks — scope: assigned | available | history | all | observed | supervised. */
+  /** GET /api/tasks — scope: assigned | available | history | all. */
   async getTasks(token: string, scope: Scope, statusFilter = ''): Promise<any[]> {
     // "assigned" also returns completed history (paged); show only open work for the inbox tabs.
     // A chosen status chip overrides that default.
