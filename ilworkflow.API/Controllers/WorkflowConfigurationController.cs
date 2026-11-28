@@ -12,7 +12,7 @@ public sealed class WorkflowConfigurationController(IWorkflowConfigurationServic
 {
     /// <summary>
     /// The only write endpoint. Without workflow_definition_id it creates a new definition. With only workflow_definition_id
-    /// it creates that definition, or its next version when it exists. With both IDs it updates that draft version.
+    /// it creates that definition (409 if it exists). With both IDs it updates that draft version.
     /// </summary>
     [HttpPost]
     public async Task<IActionResult> Save([FromBody] SaveConfigurationRequest request, CancellationToken ct) =>

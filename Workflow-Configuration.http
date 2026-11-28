@@ -151,20 +151,3 @@ POST {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body
 Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
 
 # END MAIN SEQUENCE
-
-### OPTIONAL next version
-# A definition id WITHOUT workflow_version creates the next version (the response carries its new workflow_version number). Edit it by sending both. Only one open draft per definition; existing instances remain pinned to their original version.
-# @name nextVersion
-POST {{baseUrl}}/api/workflow-configurations
-Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
-Content-Type: application/json
-
-{
-  "workflow_definition_id": "{{publishConfiguration.response.body.$.data.workflow_definition_id}}",
-  "configuration": {
-    "name": "{{publishConfiguration.response.body.$.data.configuration.name}}",
-    "start_stage": "{{publishConfiguration.response.body.$.data.configuration.start_stage}}",
-    "stages": {{publishConfiguration.response.body.$.data.configuration.stages}}
-  }
-}
-

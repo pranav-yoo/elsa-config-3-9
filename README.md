@@ -33,12 +33,12 @@ For documentation without PostgreSQL: `dotnet run --project ilworkflow.API --lau
 Run requests one at a time; use named responses within a file and copy marked IDs between files.
 
 1. [Authentication.http](Authentication.http): native local roles/users and login. Sample accounts use the configured- prefix and Password123! password. Inspect existing users/roles before creating records.
-2. [Workflow-Configuration.http](Workflow-Configuration.http): create/update draft, validate, publish and create next version.
+2. [Workflow-Configuration.http](Workflow-Configuration.http): create/update draft, validate and publish.
 3. [Ticket-Workflow.http](Ticket-Workflow.http): internal submission, A/B/C/D approvals, rejection/correction, history and reassignment.
 
 ### Definition IDs and attributes
 
-Pass `workflow_definition_id` in `POST /api/workflow-configurations` to create Elsa's workflow with that exact ID. Sending an existing definition ID without `workflow_version` creates its next version, and returns 409 while another draft of that definition is still open.
+Pass `workflow_definition_id` in `POST /api/workflow-configurations` to create Elsa's workflow with that exact ID. Sending an existing definition ID without `workflow_version` returns 409.
 
 Attributes are not configurable for now. The attribute catalog (`/api/workflow-attributes`) was removed, and every configuration is stored and returned with `"attributes": []`. Because no attribute exists, rule conditions are rejected with 400 and execution input must be `{ "attributes": {} }`. Migration `202611260001_DropWorkflowAttributes` drops the old table.
 
@@ -47,7 +47,7 @@ Attributes are not configurable for now. The attribute catalog (`/api/workflow-a
 | Body | Result |
 |---|---|
 | `configuration` only | New definition with a generated `workflow_definition_id` and its first version. |
-| `workflow_definition_id` + `configuration` | That definition if it does not exist yet, otherwise its **next version**. Returns 409 while a draft of it is still open. |
+| `workflow_definition_id` + `configuration` | Creates that definition. Returns 409 if it already exists. |
 | `workflow_definition_id` + `workflow_version` + `configuration` | Updates that draft version. Unknown version returns 404; a published version returns 409. |
 
 `workflow_version` without `workflow_definition_id` returns 400. The retired request fields `definition_id`, `id` and `expected_revision` also return 400 instead of being ignored. Read with `POST /api/workflow-configurations/get` and body `{ "workflow_definition_id": "...", "workflow_version": 2 }`; `workflow_version` is optional and, when omitted, returns the latest version. Validate and publish use `/api/workflow-configurations/{workflow_definition_id}/versions/{workflow_version}` (`POST .../validate`, `POST .../publish`). There is no `next-draft` route.

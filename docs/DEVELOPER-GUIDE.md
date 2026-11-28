@@ -38,7 +38,7 @@ Approver token
 | File | Entry points | Why this code exists |
 |---|---|---|
 | ilworkflow.API/Controllers/WorkflowConfigurationController.cs | Save, Get, Validate, Publish, NextDraft | Conventional controller; HTTP binding, authorization and responses only. POST implements create/update. |
-| ilworkflow.Infrastructure/Configuration/WorkflowConfigurationService.cs | SaveAsync (create, update or next version), PublishAsync, ApplySetup | Coordinate our schema snapshot with native Elsa version lifecycle; never manage task claims. |
+| ilworkflow.Infrastructure/Configuration/WorkflowConfigurationService.cs | SaveAsync (create or update draft), PublishAsync, ApplySetup | Coordinate our schema snapshot with native Elsa version lifecycle; never manage task claims. |
 | ilworkflow.Domain/Configuration, Entities, Enums, Rules | records, entity, enums and exact comparisons | Define the supported configuration vocabulary; reject unknown enum values rather than accept arbitrary strings or script source. |
 | ilworkflow.Application/Validation/ | WorkflowConfigurationValidator, TicketInputValidator, TaskDecisionValidator | Centralize field validation, eligibility, typed conditions and graph checks using FluentValidation. |
 | ilworkflow.Infrastructure/Persistence/ApplicationDbContext.cs, Migrations/ | model mapping and explicit migrations | Store version-linked JSONB configuration and the preconfigured attribute master, using a separate schema and migration history. |

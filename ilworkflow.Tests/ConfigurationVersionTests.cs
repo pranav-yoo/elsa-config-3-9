@@ -7,7 +7,7 @@ namespace ilworkflow.Tests;
 /// Live checks for the configuration contract: ONE save endpoint keyed by workflow_definition_id / workflow_version (the Elsa version number).
 /// <list type="bullet">
 /// <item>No IDs: new definition with a generated ID and its first version.</item>
-/// <item>workflow_definition_id only: that definition, or the next version when it already exists.</item>
+/// <item>workflow_definition_id only: that definition (409 if it exists).</item>
 /// <item>Both IDs: update that draft version.</item>
 /// <item>Revision is internal: returned, grows on every save and publish, never sent by clients.</item>
 /// </list>
@@ -16,7 +16,7 @@ namespace ilworkflow.Tests;
 public sealed class ConfigurationVersionTests(ITestOutputHelper output)
 {
     [Fact]
-    public async Task OneSaveEndpoint_CreatesUpdatesAndVersions_ByDefinitionAndVersionNumber()
+    public async Task OneSaveEndpoint_CreatesAndUpdates_ByDefinitionAndVersionNumber()
     {
         LiveSettings.Require();
         using var api = new LiveApi(TimeSpan.FromSeconds(60));
@@ -87,7 +87,7 @@ public sealed class ConfigurationVersionTests(ITestOutputHelper output)
         await Get("no-such-definition", null, "admin", 404);
         await api.PostAsync("/api/workflow-configurations/get", new JsonObject { ["workflowVersion"] = 1 }, "admin", 400); // definition required
 
-        // 4. Definition ID only while a draft is open: refused (one open draft per definition).
+        // 4. Definition ID only for an existing definition: refused.
         await Save(definitionId, null, "Second draft", "admin", 409);
 
         // 5. Bad requests.
@@ -112,32 +112,11 @@ public sealed class ConfigurationVersionTests(ITestOutputHelper output)
         // 7. A published version is immutable.
         await Save(definitionId, (int)v1["workflowVersion"]!, "x", "admin", 409);
 
-        // 8. Definition ID only after publishing: next version of the same definition, new version ID, revision restarts.
-        var v2 = await Save(definitionId, null, "Second version");
-        Assert.Equal(definitionId, (string)v2["workflowDefinitionId"]!);
-                Assert.Equal(2, (int)v2["workflowVersion"]!);
-        Assert.Equal(1L, (long)v2["revision"]!);
-        Assert.False((bool)v2["isPublished"]!);
-        var latest = await Get(definitionId);
-        Assert.Equal(2, (int)latest["workflowVersion"]!);
-        Assert.Equal(1, (int)(await Get(definitionId, 1))["workflowVersion"]!); // explicit version still wins
-
-        // 9. Updating v2 never touches v1.
-        var v2b = await Save(definitionId, (int)v2["workflowVersion"]!, "Second edited");
-        Assert.Equal(2L, (long)v2b["revision"]!);
-        Assert.Equal(2, (int)v2b["workflowVersion"]!);
-        var v1Again = await Get(definitionId, 1);
-        Assert.True((bool)v1Again["isPublished"]!);
-        Assert.Equal("Renamed again", (string)v1Again["configuration"]!["name"]!);
-
-        // 10. One open draft at a time; publishing v2 opens the way for v3.
+        // 8. Definition ID only for an existing definition is refused: versions are not auto-created.
         await Save(definitionId, null, "x", "admin", 409);
-        Assert.True((bool)(await api.PostAsync(Path(v2b, "/publish"), null))["isPublished"]!);
-        var v3 = await Save(definitionId, null, "Third");
-        Assert.Equal(3, (int)v3["workflowVersion"]!);
-        Assert.Equal(1L, (long)v3["revision"]!);
+        Assert.Equal(1, (int)(await Get(definitionId))["workflowVersion"]!);
 
-        // 11. Permissions and unknown targets.
+        // 9. Permissions and unknown targets.
         await api.LoginAsync("approver", "config-version-approver", "Password123!");
         await Save(null, null, "x", "approver", 403);
         await Get(definitionId, 1, "approver", 403);

@@ -26,8 +26,7 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
     }
 
     /// <summary>
-    /// One write path. A version number updates that draft; otherwise a new version is created. Without a definition ID the
-    /// definition is new too. Revision is internal: it grows on every successful save and publish and is never sent by clients.
+    /// One write path. A version number updates that draft; otherwise a new definition is created. Revision is internal: it grows on every successful save and publish and is never sent by clients.
     /// </summary>
     public async Task<WorkflowConfiguration> SaveAsync(SaveConfigurationRequest request, CancellationToken ct)
     {
@@ -38,7 +37,7 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var (row, definition, setup) = version is not null
             ? await OpenDraftAsync(definitionId!, version.Value, input, ct)
-            : await CreateVersionAsync(definitionId, input, ct);
+            : await CreateDefinitionAsync(definitionId, input, ct);
         row.ConfigurationJson = ConfigurationJson.Write(setup);
         row.Ready = false;
         ApplySetup(definition, setup);
@@ -61,38 +60,27 @@ public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkf
         var row = await GetAsync(definitionId, version, ct);
         await LockAsync(row.DefinitionId, ct);
         await db.Entry(row).ReloadAsync(ct);
-        if (row.Frozen) throw new ApiException(409, "Published versions cannot be edited. Omit workflow_version to create the next version.");
+        if (row.Frozen) throw new ApiException(409, "Published versions cannot be edited.");
         var definition = await definitions.FindAsync(new WorkflowDefinitionFilter { Id = row.DefinitionVersionId }, ct) ?? throw new ApiException(409, "Elsa draft is missing.");
         if (definition.IsPublished) throw new ApiException(409, "Elsa version is already published.");
         row.Revision++;
         return (row, definition, await BuildSetupAsync(input, ct));
     }
 
-    /// <summary>Create a definition (generated or caller-chosen ID) or the next version of an existing one.</summary>
-    private async Task<(WorkflowConfiguration Row, WorkflowDefinition Definition, WorkflowSetup Setup)> CreateVersionAsync(
+    /// <summary>Create a new definition with a generated or caller-chosen ID.</summary>
+    private async Task<(WorkflowConfiguration Row, WorkflowDefinition Definition, WorkflowSetup Setup)> CreateDefinitionAsync(
         string? definitionId, WorkflowSetupRequest input, CancellationToken ct)
     {
-        WorkflowDefinition definition;
         if (definitionId is not null)
         {
             await LockAsync(definitionId, ct);
-            var latest = await definitions.FindAsync(new WorkflowDefinitionFilter { DefinitionId = definitionId, VersionOptions = VersionOptions.Latest }, ct);
-            if (latest is not null)
-            {
-                var open = await db.WorkflowConfigurations.FirstOrDefaultAsync(x => x.TenantId == "" && x.DefinitionId == definitionId && !x.Frozen, ct);
-                if (open is not null)
-                    throw new ApiException(409, $"Draft version {open.DefinitionVersion} is still open. Send its workflow_version to update it, or publish it first.");
-                if (!await db.WorkflowConfigurations.AnyAsync(x => x.TenantId == "" && x.DefinitionId == definitionId, ct))
-                    throw new ApiException(409, "This definition exists in Elsa but was not created through workflow configurations.");
-                // Validate before Elsa creates the draft so a rejected request cannot leave an orphan version behind.
-                var nextSetup = await BuildSetupAsync(input, ct);
-                definition = await publisher.GetDraftAsync(definitionId, VersionOptions.Published, ct) ?? throw new ApiException(409, "Published definition is missing.");
-                return (NewRow(definition), definition, nextSetup);
-            }
+            if (await definitions.FindAsync(new WorkflowDefinitionFilter { DefinitionId = definitionId, VersionOptions = VersionOptions.Latest }, ct) is not null)
+                throw new ApiException(409, "Definition already exists. Send workflow_version to update a draft.");
         }
-        definition = await publisher.NewAsync(cancellationToken: ct);
+        var setup = await BuildSetupAsync(input, ct);
+        var definition = await publisher.NewAsync(cancellationToken: ct);
         if (definitionId is not null) definition.DefinitionId = definitionId;
-        return (NewRow(definition), definition, await BuildSetupAsync(input, ct));
+        return (NewRow(definition), definition, setup);
     }
 
     private WorkflowConfiguration NewRow(WorkflowDefinition definition)
