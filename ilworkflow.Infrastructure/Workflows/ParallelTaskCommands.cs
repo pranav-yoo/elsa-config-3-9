@@ -7,7 +7,7 @@ using Elsa.Workflows.Runtime;
 using Elsa.Workflows.Runtime.Filters;
 using Npgsql;
 
-namespace IlWorkflow.Api.Workflows;
+namespace IlWorkflow.Infrastructure.Workflows;
 
 /// <summary>Elsa reserves completion on a task before resuming its bookmark. Serialize both steps
 /// across sibling tasks so a losing task never reserves an approval while its bookmark is being removed.</summary>

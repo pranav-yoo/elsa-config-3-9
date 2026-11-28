@@ -2,7 +2,7 @@ using System.Security.Claims;
 using Elsa.UserTasks.Contracts;
 using FluentValidation;
 using Elsa.UserTasks.Models;
-using IlWorkflow.Api.Workflows;
+using IlWorkflow.Infrastructure.Workflows;
 
 namespace IlWorkflow.Infrastructure.Tasks;
 

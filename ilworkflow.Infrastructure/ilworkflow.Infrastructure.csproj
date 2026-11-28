@@ -1,26 +1,17 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-  </PropertyGroup>
-  <!-- Preserve the assembly identity used by persisted Elsa activity/property types. -->
-  <PropertyGroup>
-    <AssemblyName>IlWorkflow.Api</AssemblyName>
-  </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Elsa" Version="3.9.0" />
-    <PackageReference Include="Elsa.Persistence.EFCore.PostgreSql" Version="3.9.0" />
-    <PackageReference Include="Elsa.Identity" Version="3.9.0" />
-    <PackageReference Include="Elsa.Http" Version="3.9.0" />
-    <PackageReference Include="Elsa.Workflows.Api" Version="3.9.0" />
-    <PackageReference Include="Elsa.UserTasks" Version="3.9.0" />
-    <PackageReference Include="Elsa.UserTasks.Persistence.EFCore.PostgreSql" Version="3.9.0" />
-    <PackageReference Include="Elsa.Expressions.JavaScript" Version="3.9.0" />
+    <PackageReference Include="Elsa" />
+    <PackageReference Include="Elsa.Persistence.EFCore.PostgreSql" />
+    <PackageReference Include="Elsa.Identity" />
+    <PackageReference Include="Elsa.Http" />
+    <PackageReference Include="Elsa.Workflows.Api" />
+    <PackageReference Include="Elsa.UserTasks" />
+    <PackageReference Include="Elsa.UserTasks.Persistence.EFCore.PostgreSql" />
+    <PackageReference Include="Elsa.Expressions.JavaScript" />
   </ItemGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
-    <ProjectReference Include="../ilworkflow.Application/ilworkflow.Application.csproj" />
+    <ProjectReference Include="../ilworkflow.Core/ilworkflow.Core.csproj" />
     <ProjectReference Include="../ilworkflow.Contracts/ilworkflow.Contracts.csproj" />
   </ItemGroup>
 </Project>

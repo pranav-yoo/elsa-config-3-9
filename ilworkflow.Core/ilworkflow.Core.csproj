@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The business core, one folder per feature: WorkflowConfigurations/, Tasks/, Tickets/ and Common/.
+    Each feature holds its model, request/response records, validators and service interfaces.
+    Keep this project free of Elsa, EF Core and ASP.NET: Infrastructure depends on Core, never the other way round.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="../ilworkflow.Contracts/ilworkflow.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="FluentValidation" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+</Project>

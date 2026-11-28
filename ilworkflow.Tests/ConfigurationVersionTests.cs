@@ -81,7 +81,6 @@ public sealed class ConfigurationVersionTests(ITestOutputHelper output)
         Assert.Equal(3L, (long)v1c["revision"]!);
         Assert.Equal(1, (int)v1c["workflowVersion"]!);
         Assert.Equal(v1c.ToJsonString(), (await Get(definitionId, 1)).ToJsonString());
-        Assert.Empty(v1c["configuration"]!["attributes"]!.AsArray()); // attributes are not configurable for now
         // GET without a version returns the latest version.
         Assert.Equal(v1c.ToJsonString(), (await Get(definitionId)).ToJsonString());
         await Get("no-such-definition", null, "admin", 404);

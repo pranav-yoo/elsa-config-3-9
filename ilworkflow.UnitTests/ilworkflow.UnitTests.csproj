@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Fast tests: no server, no database. Run with: dotnet test ilworkflow.UnitTests -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ilworkflow.Contracts/ilworkflow.Contracts.csproj" />
+    <ProjectReference Include="../ilworkflow.Core/ilworkflow.Core.csproj" />
+    <ProjectReference Include="../ilworkflow.Infrastructure/ilworkflow.Infrastructure.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <Using Include="IlWorkflow.Core.Common" />
+    <Using Include="IlWorkflow.Core.Tasks" />
+    <Using Include="IlWorkflow.Core.Tasks.Validators" />
+    <Using Include="IlWorkflow.Core.Tickets" />
+    <Using Include="IlWorkflow.Core.WorkflowConfigurations" />
+    <Using Include="IlWorkflow.Contracts.WorkflowConfigurations.Model" />
+    <Using Include="IlWorkflow.Contracts.Tasks.Requests" />
+    <Using Include="IlWorkflow.Core.WorkflowConfigurations.Validators" />
+  </ItemGroup>
+</Project>

@@ -2,29 +2,28 @@ using System.Text.Json;
 using Elsa.Extensions;
 using Elsa.Workflows;
 using Elsa.Workflows.Attributes;
-using Elsa.Workflows.Models;
-using FluentValidation;
-using ConfigJson = IlWorkflow.Application.Common.ConfigurationJson;
 
-namespace IlWorkflow.Api.Workflows;
+namespace IlWorkflow.Infrastructure.Workflows;
 
-[Activity("Tickets", "Tickets", "Initializes a validated ticket snapshot.")]
+/// <summary>First node of every generated workflow: records who submitted the ticket and its attributes.</summary>
+[Activity("Tickets", "Tickets", "Initializes a ticket from the workflow input.")]
 public sealed class InitializeTicket : Activity
 {
-    [Input] public Input<string> ConfigurationJson { get; set; } = null!;
     protected override async ValueTask ExecuteAsync(ActivityExecutionContext context)
     {
-        var setup = ConfigJson.Read<WorkflowSetup>(ConfigurationJson.Get(context));
-        var values = context.GetWorkflowInput<Dictionary<string, JsonElement>>("attributes");
-        await new TicketInputValidator(setup).ValidateAndThrowAsync(values, context.CancellationToken);
-        var requester = context.GetWorkflowInput<string>("requesterId");
-        if (string.IsNullOrWhiteSpace(requester)) throw new InvalidOperationException("Requester must be supplied by the authenticated execute guard.");
-        var output = context.WorkflowExecutionContext.Output;
-        output["requesterId"] = requester;
-        output["ticketOutcome"] = TicketOutcome.InReview.ToString();
-        output["attributeRevision"] = 1;
-        output["attributeHistory"] = JsonSerializer.SerializeToElement(new[] { new { revision = 1, attributes = values } });
-        TicketState.SetAttributes(context, values, setup);
+        // WorkflowRequestGuard has already validated the request and set requesterId from the caller's token.
+        var requester = context.GetWorkflowInput<string>(TicketState.Requester);
+        if (string.IsNullOrWhiteSpace(requester))
+            throw new InvalidOperationException("requesterId must be set by the execute guard.");
+
+        var values = context.GetWorkflowInput<Dictionary<string, JsonElement>>(TicketState.Attributes) ?? [];
+        var attributes = JsonSerializer.SerializeToElement(values);
+
+        var workflow = context.WorkflowExecutionContext;
+        workflow.Output[TicketState.Requester] = requester;
+        TicketState.SetOutcome(workflow, TicketOutcome.InReview);
+        TicketState.AddAttributeRevision(workflow, attributes);
+
         await context.CompleteActivityAsync();
     }
 }

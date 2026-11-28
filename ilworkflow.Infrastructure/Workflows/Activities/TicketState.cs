@@ -1,31 +1,53 @@
 using System.Text.Json;
-using Elsa.Extensions;
 using Elsa.UserTasks.Models;
 using Elsa.Workflows;
 
-namespace IlWorkflow.Api.Workflows;
+namespace IlWorkflow.Infrastructure.Workflows;
 
-/// <summary>State helpers operate on the persisted workflow output, not short-lived activity properties.</summary>
+/// <summary>
+/// Read/write helpers for ticket data kept in the workflow OUTPUT.
+/// Workflow output is saved with the instance and survives restarts, so it is the single place for ticket state.
+/// Clients read it from GET /elsa/api/workflow-instances/{id} (workflowState.output).
+/// </summary>
 public static class TicketState
 {
-    public static Dictionary<string, JsonElement> Attributes(WorkflowExecutionContext context) =>
-        ConfigurationJson.Read<Dictionary<string, JsonElement>>(ConfigurationJson.Write(context.Output["attributes"]));
-    public static string Requester(WorkflowExecutionContext context) => context.Output["requesterId"]?.ToString() ?? "";
-    public static ParticipantReference User(string id) => new("", "default", UserTaskParticipantType.User, id);
-    public static void SetAttributes(ActivityExecutionContext context, Dictionary<string, JsonElement> values, WorkflowSetup setup)
+    public const string Requester = "requesterId";
+    public const string Outcome = "ticketOutcome";
+    public const string CurrentStage = "currentStage";
+    public const string LastDecision = "lastDecision";
+    public const string Attributes = "attributes";
+    public const string AttributeRevision = "attributeRevision";
+    public const string AttributeHistory = "attributeHistory";
+
+    public static string GetRequester(WorkflowExecutionContext workflow) => workflow.Output[Requester]?.ToString() ?? "";
+
+    public static JsonElement GetAttributes(WorkflowExecutionContext workflow) =>
+        JsonSerializer.SerializeToElement(workflow.Output[Attributes]);
+
+    public static void SetOutcome(WorkflowExecutionContext workflow, TicketOutcome outcome) =>
+        workflow.Output[Outcome] = outcome.ToString();
+
+    /// <summary>Stores new attributes and appends them to the history as the next revision.</summary>
+    public static void AddAttributeRevision(WorkflowExecutionContext workflow, JsonElement attributes)
     {
-        // Workflow output survives pruning of completed activity contexts. The flowchart variable is
-        // persisted alongside typed route results, recalculated whenever attributes change.
-        context.WorkflowExecutionContext.Output["attributes"] = values;
-        var routes = new Dictionary<string, bool>();
-        foreach (var stage in setup.Stages)
-            foreach (var action in stage.Actions ?? [])
-                for (var index = 0; index < (action.Rules?.Length ?? 0); index++)
-                    routes[StageAction.RouteKey(stage.Key, action.Key, index)] = AttributeRules.Matches(action.Rules![index].Conditions, values);
-        var snapshot = JsonSerializer.SerializeToNode(values)!;
-        snapshot["$routes"] = JsonSerializer.SerializeToNode(routes);
-        // Keep the original fields for existing persisted graphs. New graphs read only $routes;
-        // public attributes/task data stay free of this internal metadata.
-        context.ExpressionExecutionContext.SetVariable("attributesJson", snapshot.ToJsonString());
+        var history = ReadHistory(workflow);
+        var revision = history.Count + 1;
+        history.Add(JsonSerializer.SerializeToElement(new { revision, attributes }));
+
+        workflow.Output[Attributes] = attributes;
+        workflow.Output[AttributeRevision] = revision;
+        workflow.Output[AttributeHistory] = JsonSerializer.SerializeToElement(history);
+    }
+
+    /// <summary>A task participant in Elsa's format, from one of our user IDs.</summary>
+    public static ParticipantReference User(string id) => new("", "default", UserTaskParticipantType.User, id);
+
+    private static List<JsonElement> ReadHistory(WorkflowExecutionContext workflow)
+    {
+        if (!workflow.Output.TryGetValue(AttributeHistory, out var stored) || stored is null) return [];
+        var json = JsonSerializer.SerializeToElement(stored);
+        // Elsa may store collections wrapped as { "$values": [...] }.
+        if (json.ValueKind == JsonValueKind.Object && json.TryGetProperty("$values", out var values)) json = values;
+        return json.EnumerateArray().Select(item => item.Clone()).ToList();
     }
 }

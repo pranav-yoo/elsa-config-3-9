@@ -1,0 +1,12 @@
+global using IlWorkflow.Core.Common;
+global using IlWorkflow.Core.Tasks;
+global using IlWorkflow.Core.Tasks.Validators;
+global using IlWorkflow.Core.Tickets;
+global using IlWorkflow.Core.Tickets.Validators;
+global using IlWorkflow.Core.WorkflowConfigurations;
+global using IlWorkflow.Core.WorkflowConfigurations.Validators;
+global using IlWorkflow.Contracts.Common;
+global using IlWorkflow.Contracts.Tasks.Requests;
+global using IlWorkflow.Contracts.WorkflowConfigurations.Model;
+global using IlWorkflow.Contracts.WorkflowConfigurations.Requests;
+global using IlWorkflow.Contracts.WorkflowConfigurations.Responses;

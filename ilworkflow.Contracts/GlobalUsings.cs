@@ -1,1 +1,1 @@
-global using IlWorkflow.Domain.Configuration;
+global using IlWorkflow.Contracts.WorkflowConfigurations.Model;

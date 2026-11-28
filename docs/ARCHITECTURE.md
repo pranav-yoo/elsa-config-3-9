@@ -1,26 +1,24 @@
 # Four-project architecture
 
-HTTP contracts, workflow behavior and database schemas are preserved.
-
 ```text
-API -> Application -> Domain
-API -> Infrastructure -> Application / Domain
+API -> Infrastructure -> Core -> Contracts
+API -> Core, Contracts
 ```
 
-- **Domain:** Folders: Entities (WorkflowConfiguration), Enums, Configuration (value records such as WorkflowSetup and StageDefinition) and Rules (AttributeRules exact comparisons, TaskActionKeys). No external package dependencies.
-- **Contracts:** every HTTP request and response model, grouped by module (`WorkflowConfigurations`, `Tasks`), each with `Requests/` and `Responses/` folders and matching namespaces. It references Domain for the shared value types (stages, attribute definitions) and has no Elsa, EF Core or ASP.NET dependency. Elsa's own native response types stay with Elsa.
-- **Application:** Folders: Abstractions (IWorkflowConfigurationService and IApproverDirectory ports), Common (ConfigurationJson, ApiException), Validation and Workflows (AssignmentResolver). Validators enforce configuration/input/decision rules. AssignmentResolver selects eligible participants through the directory port. References Domain and FluentValidation only.
-- **Infrastructure:** WorkflowConfigurationService implements the application port using EF and native Elsa publishing. Folders: Authentication (user-token scheme), Authorization (permission checks, observer/supervisor access policy, instance read access), Configuration (the service), Identity (ApproverDirectory resolves approver roles from Elsa Identity), Persistence (DbContext, Migrations/, UserTasks/ provider fixes), Tasks (TaskService, observed/supervised query) and Workflows (graph builder, form adapter, parallel-task locking, Activities/).
-- **API:** Folders: Controllers, Common (ApiResultHelper builds every Result<T> response), Extensions (service registration, startup helpers), Filters, Middleware. Controllers bind requests; middleware guards native execution. Extensions/WorkflowServiceRegistration.cs connects ports/adapters and registers Elsa/custom services. Program.cs owns startup, diagnostics, database initialization and the request pipeline.
+- **Contracts:** the public shape of the API, with no dependencies. One folder per feature: `WorkflowConfigurations/` (`Model/` with WorkflowSetup, StageDefinition, StageAction, Destination, AssignmentDefinition, TaskActionKeys and enums; `Requests/`; `Responses/`), `Tasks/Requests/` and `Common/` (`Result<T>`). The workflow model lives here because it appears inside requests and responses, and Core's validators use those requests: keeping it in Core would make the two projects reference each other. Elsa's own native response types stay with Elsa.
+- **Core:** the business rules, with no Elsa, EF Core or ASP.NET dependency (Contracts, FluentValidation and DI abstractions only):
+  - `WorkflowConfigurations/`: `Validators/`, the `WorkflowConfiguration` database row and `IWorkflowConfigurationService`.
+  - `Tasks/`: `TaskDecisionValidator`, `AssignmentResolver`, `IApproverDirectory`.
+  - `Tickets/`: `TicketOutcome`, `ExecuteRequestValidator`.
+  - `Common/`: `ApiException`, `ConfigurationJson`.
+  - `DependencyInjection.cs`: `AddCore()`.
+- **Infrastructure:** WorkflowConfigurationService implements the Core interface using EF and native Elsa publishing. `DependencyInjection.cs` (`AddInfrastructure()`) registers Elsa, the database and the task services. Folders: Authentication (user-token scheme), Authorization (permission checks, observer/supervisor access policy, instance read access), Configuration (the service), Identity (ApproverDirectory resolves approver roles from Elsa Identity), Persistence (DbContext, Configurations/ table mappings, Migrations/, UserTasks/ provider fixes), Tasks (TaskService, observed/supervised query) and Workflows (graph builder, form adapter, parallel-task locking, Activities/).
+- **API:** Controllers, Common (ApiResultHelper builds every Result<T> response), Extensions (`AddApi()` for controllers/JSON/policies, startup helpers), Middleware (ExceptionHandlingMiddleware, WorkflowRequestGuard). Program.cs calls `AddCore()`, `AddInfrastructure()` and `AddApi()`, then builds the request pipeline.
+
+Why Contracts and Core, but no separate Domain: the model is a configuration shape without behavior of its own, so it lives with the contracts. The boundary that matters, Core and Contracts never referencing Elsa or EF Core, is enforced by the compiler. Split the model into its own project if it gains real business rules.
 
 No generic repository wrappers, mediator pipeline or replacement task tables were added. EF/Elsa-dependent orchestration stays behind the application service port.
 
 Run `dotnet run --project ilworkflow.API --launch-profile http`. API owns settings, Samples and launch profiles. Root setup/token scripts now target that project. The user-secret ID remains ilworkflow-elsa-local.
 
-Infrastructure deliberately keeps assembly name IlWorkflow.Api and the IlWorkflow.Api.Workflows namespace (every type under Workflows/, including Activities/), because persisted Elsa state can refer to those CLR identities. The API host uses ilworkflow.API.Host. These compatibility names do not reverse project dependencies. Migration identifiers/schemas stay unchanged; moving files does not recreate data or rewrite published definitions.
-
-README documents the live workflow, identity, request-file, preview and restart checks.
-
-## Configuration versions
-
-`SaveConfigurationRequest.workflow_definition_id` supplies the native Elsa family ID; `workflow_version` selects the draft to update, and omitting it creates a new version. Attributes are not configurable for now: every snapshot stores an empty list. Published versions and their instances remain pinned.
+Infrastructure uses namespace IlWorkflow.Infrastructure.* (assembly ilworkflow.Infrastructure). Elsa identifies the custom activities by their `[Activity]` type names (`Tickets.TicketReview`, ...), not by CLR namespace. Migration identifiers/schemas stay unchanged.

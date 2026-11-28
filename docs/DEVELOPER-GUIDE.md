@@ -37,14 +37,14 @@ Approver token
 
 | File | Entry points | Why this code exists |
 |---|---|---|
-| ilworkflow.API/Controllers/WorkflowConfigurationController.cs | Save, Get, Validate, Publish, NextDraft | Conventional controller; HTTP binding, authorization and responses only. POST implements create/update. |
+| ilworkflow.API/Controllers/WorkflowConfigurationController.cs | Save, Get, Validate, Publish | Conventional controller; HTTP binding, authorization and responses only. POST implements create/update. |
 | ilworkflow.Infrastructure/Configuration/WorkflowConfigurationService.cs | SaveAsync (create or update draft), PublishAsync, ApplySetup | Coordinate our schema snapshot with native Elsa version lifecycle; never manage task claims. |
-| ilworkflow.Domain/Configuration, Entities, Enums, Rules | records, entity, enums and exact comparisons | Define the supported configuration vocabulary; reject unknown enum values rather than accept arbitrary strings or script source. |
-| ilworkflow.Application/Validation/ | WorkflowConfigurationValidator, TicketInputValidator, TaskDecisionValidator | Centralize field validation, eligibility, typed conditions and graph checks using FluentValidation. |
-| ilworkflow.Infrastructure/Persistence/ApplicationDbContext.cs, Migrations/ | model mapping and explicit migrations | Store version-linked JSONB configuration and the preconfigured attribute master, using a separate schema and migration history. |
+| ilworkflow.Contracts/WorkflowConfigurations/Model | records, enums and the configuration entity | Define the supported configuration vocabulary; reject unknown enum values rather than accept arbitrary strings or script source. |
+| ilworkflow.Core/*/Validators/ | WorkflowConfigurationValidator, TaskDecisionValidator, ExecuteRequestValidator | Configuration consistency, approver eligibility and task completion rules using FluentValidation. |
+| ilworkflow.Infrastructure/Persistence/ApplicationDbContext.cs, Migrations/ | model mapping and explicit migrations | Store version-linked JSONB configuration, using a separate schema and migration history. |
 | ilworkflow.Infrastructure/Workflows/WorkflowDefinitionBuilder.cs | Build | Compile configuration into a native flowchart; native FlowDecision nodes read persisted typed comparison results. |
 | ilworkflow.Infrastructure/Workflows/Activities/ | InitializeTicket, TicketReview, ParallelTicketReview, FinishTicket, TicketState | Thin typed integration activities around native human tasks; own no task table or claim state. |
-| ilworkflow.Application/Workflows/AssignmentResolver.cs | ResolveAsync | Select eligible candidates/initial owner from supported policies; Elsa owns the resulting assignment. |
+| ilworkflow.Core/Tasks/AssignmentResolver.cs | ResolveAsync | Select eligible candidates/initial owner from supported policies; Elsa owns the resulting assignment. |
 | ilworkflow.Infrastructure/Workflows/TicketFormProvider.cs | ResolveAsync, ValidateAndNormalizeAsync | Make validation unavoidable even when a client calls native Elsa complete directly. |
 | ilworkflow.API/Middleware/WorkflowRequestGuard.cs | InvokeAsync | Protect existing Elsa routes; it is middleware, not an endpoint/controller. |
 | ilworkflow.Infrastructure/Authorization/WorkflowAccessService.cs | CanReadInstanceAsync | Restrict native instance reads to requester, participating workers or supervisors. |
@@ -79,21 +79,17 @@ Elsa normalizes serialized drafts. Hash the representation read back from its na
 
 ## Why a generated graph plus a typed review activity?
 
-The graph's connections are the executable routes. The review wrapper does not calculate a destination. It emits an outcome, and Elsa chooses the connected node.
+The graph's connections are the executable routes. The review wrapper does not calculate a destination. It completes with an outcome named after the pressed action key (for example `APPROVE` or `REFER_UW`), and Elsa follows the connection with that port name. There are no decision nodes and no JavaScript expressions in the generated graph.
 
-Custom action labels represented as nested `Input<string>` inside literal JSON failed conversion in Elsa 3.9 during the research. `TicketReview` constructs `UserTaskActionDefinition` in typed C# with uppercase keys and readable labels. The completion callback maps the public key to the existing graph port, so pending tasks with older casing can still resume.
-
-Conditions use the shared C# `AttributeRules.Matches` implementation for both routing and assignment. `TicketState.SetAttributes` calculates route results at submission and correction and persists them under the internal `$routes` key in `attributesJson`. Native `FlowDecision` nodes read those booleans, so JavaScript cannot round decimal/Int64 amounts or inherit properties for missing fields. Public attributes and task data do not contain `$routes`. A configurator never submits raw JavaScript. Existing immutable definitions retain their old expressions; publish a new version to adopt the corrected graph generation.
+Custom action labels represented as nested `Input<string>` inside literal JSON failed conversion in Elsa 3.9 during the research. `TicketReview` constructs `UserTaskActionDefinition` in typed C# with uppercase keys and readable labels. The completion callback maps the key the client sent (any casing) back to the configured key before using it as the outcome.
 
 ## Attributes, revisions and correction
 
-All field definitions belong to the application snapshot. Every submitted field is validated. Fields used in routing/assignment conditions are additionally described as top-level native workflow inputs. Clients still send one `input.attributes` object; the guard supplies normalized values and identity.
+`input.attributes` is the ticket's business data. The API stores it but does not interpret it: there is no attribute schema and no conditional routing for now. `InitializeTicket` saves it as revision 1 in workflow output (`attributes`, `attributeRevision`, `attributeHistory`). Completed activity contexts can be pruned, so final outcome/history must not live only in `ActivityExecutionContext.Properties`.
 
-The complete attributes and revision history live in workflow output; `attributesJson` is a workflow-storage-backed variable for conditions. Completed activity contexts can be pruned, so final outcome/history must not live only in `ActivityExecutionContext.Properties`.
+Pending review tasks have a snapshot of their task data and form binding. Form validation must use that binding, not the latest editable database configuration. Review accepts string `reason`/`comment` only; attributes are frozen. An action with `require_reason` needs a nonblank reason. Elsa itself rejects action keys the task does not offer (422 `invalid-action`).
 
-Pending review tasks have a snapshot of their task data and form binding. Form validation must use that binding, not the latest editable database configuration. Review accepts reason/comment only; attributes are frozen. Rejection requires a nonblank reason.
-
-Correction creates an assigned task for the original requester. Resubmit supplies the full validated attribute object, appends a revision, updates conditions' persisted variable, and emits Resubmit. The graph fixes the return stage using the rejection destination's `stageKey`. D -> correction -> D intentionally does not rerun B/C when an amount changes.
+Correction creates an assigned task for the original requester. Resubmit supplies a new `attributes` object, appends a revision and completes with the `Resubmit` outcome. The graph fixes the return stage using the correction destination's `stageKey`. D -> correction -> D intentionally does not rerun earlier stages.
 
 ## Middleware and access control
 
@@ -126,7 +122,7 @@ The native keyword-search predicate includes `Tags.Any`, which is not translatab
 
 ## Verification and remaining boundaries
 
-`ilworkflow.Tests/ConfiguredWorkflowTests.cs` creates realistic accounts and exercises configuration versioning, conditional approvals, all rejection routes, correction, stale/duplicate commands, concurrent claims, missing assignment repair and access/validation failures. It saves only IDs for a post-restart phase. The test runner never prints or persists issued tokens.
+`ilworkflow.Tests/ConfiguredWorkflowTests.cs` creates realistic accounts and exercises configuration versioning, all rejection routes, correction, stale/duplicate commands, concurrent claims, missing assignment repair and access/validation failures. It saves only IDs for a post-restart phase. The test runner never prints or persists issued tokens.
 
 `ilworkflow.Tests/HttpFileSequenceTests.cs` executes the actual main HTTP-file requests, resolving their response variables and filters. Optional reject/update branches are deliberately excluded from a happy-path Send All.
 
@@ -138,4 +134,4 @@ Native completion is asynchronous: 202 is acceptance, not proof the next task ex
 
 ## Named definitions
 
-Pass workflow_definition_id in the configuration POST to set the native Elsa family ID. Attributes are not configurable for now: the attribute catalog was removed and every snapshot stores an empty attributes list, so conditions[].attribute rules are rejected. Dropping the old table is migration 202611260001_DropWorkflowAttributes.
+Pass workflow_definition_id in the configuration POST to set the native Elsa family ID. The attribute catalog and conditional routing were removed; migration 202611260001_DropWorkflowAttributes drops the old table. `Tests/smoke_workflow.py` is the current end-to-end check; the C# live tests still reference the removed features.
