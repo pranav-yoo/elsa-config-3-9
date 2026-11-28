@@ -89,7 +89,7 @@ Run one request at a time (VS Code REST Client) and copy the IDs between files.
 | Body contains | Result |
 |---|---|
 | `configuration` only | New definition with a generated `workflow_definition_id`, version 1. |
-| `workflow_definition_id` + `configuration` | That definition, or its **next version** if it exists (409 while a draft is still open). |
+| `workflow_definition_id` + `configuration` | Creates that definition (409 if it exists). |
 | `workflow_definition_id` + `workflow_version` + `configuration` | Updates that draft (404 unknown version, 409 if already published). |
 
 ```json
