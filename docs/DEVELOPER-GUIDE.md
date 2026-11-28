@@ -95,7 +95,7 @@ Correction creates an assigned task for the original requester. Resubmit supplie
 
 Middleware runs after authentication/authorization and before native Elsa handlers. The configuration controller does not own native execute URLs; therefore endpoint validation alone would be bypassable if placed only there.
 
-`SwaggerPreview=true` is Development-only documentation mode. Application migrations are skipped along with Elsa's migrations. The guard returns 503 for configuration and business mutations; login remains available for browsing authorized endpoints. `ConfiguredWorkflowTests` with `ILWORKFLOW_VERIFY_PREVIEW=1` checks this against a preview server, which can be started with an unavailable PostgreSQL port to verify no connection is required.
+`SwaggerPreview=true` is Development-only documentation mode. Application migrations are skipped along with Elsa's migrations. The guard returns 503 for configuration and business mutations; login remains available for browsing authorized endpoints.
 
 The guard validates before an instance is created, injects the real requester, pins the published version, rejects alternate activity starts/custom variables, and prevents ordinary users from dispatch/import/administrative paths. Native execute is synchronous for this phase; no HTTP identity is read from a later background workflow callback.
 
@@ -122,7 +122,7 @@ The native keyword-search predicate includes `Tags.Any`, which is not translatab
 
 ## Verification and remaining boundaries
 
-`ilworkflow.Tests/ConfiguredWorkflowTests.cs` creates realistic accounts and exercises configuration versioning, all rejection routes, correction, stale/duplicate commands, concurrent claims, missing assignment repair and access/validation failures. It saves only IDs for a post-restart phase. The test runner never prints or persists issued tokens.
+`ilworkflow.Tests/ConfigurationVersionTests.cs` exercises the configuration endpoints against a running API: create, update, get by version, validate, publish, immutability and permissions.
 
 `ilworkflow.Tests/HttpFileSequenceTests.cs` executes the actual main HTTP-file requests, resolving their response variables and filters. Optional reject/update branches are deliberately excluded from a happy-path Send All.
 
