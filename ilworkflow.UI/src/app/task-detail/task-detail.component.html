@@ -1,0 +1,88 @@
+<div class="backdrop" (click)="close.emit()"></div>
+<aside>
+  <header>
+    <div>
+      <h2>{{ task().title ?? task().displayName ?? task().name ?? task().id }}</h2>
+      <span class="status">{{ task().status }}</span>
+    </div>
+    <button class="x" (click)="close.emit()" aria-label="Close">✕</button>
+  </header>
+
+  <section>
+    @if (task().summary) { <p class="summary">{{ task().summary }}</p> }
+    <dl>
+      <dt>Workflow</dt><dd>{{ task().workflow?.definitionName ?? task().workflowDefinitionName }}</dd>
+      <dt>Reference</dt><dd>{{ task().reference ?? task().workflowInstanceReference }}</dd>
+      <dt>Assignee</dt><dd>{{ who(task().assignee ?? task().assignedTo) }}</dd>
+      <dt>Workflow instance</dt><dd>{{ task().workflowInstanceId }}</dd>
+      <dt>Created</dt><dd>{{ (task().createdAt ?? task().createdAtUtc) | date:'medium' }}</dd>
+      <dt>Revision</dt><dd>{{ task().revision }}</dd>
+    </dl>
+  </section>
+
+  <section>
+    <h3>Submitted data</h3>
+    @if (dataEntries().length) {
+      <dl>
+        @for (e of dataEntries(); track e[0]) { <dt>{{ e[0] }}</dt><dd>{{ display(e[1]) }}</dd> }
+      </dl>
+    } @else { <p class="muted">No data.</p> }
+  </section>
+
+  <section>
+    <h3>Decision</h3>
+    <div class="chips">
+      @for (a of actions(); track a.key) {
+        <button class="chip" [class.on]="selected()?.key === a.key" [class.reject]="a.key.toUpperCase() === 'REJECT'"
+                [disabled]="!canDo(a)" [title]="canDo(a) ? '' : 'Not allowed right now'" (click)="choose(a)">{{ a.label }}</button>
+      }
+    </div>
+    @if (!actions().length) { <p class="muted">This task has no actions.</p> }
+
+    @if (kind(); as k) {
+      <label>
+        @switch (k) {
+          @case ('approve') { Comment (optional) }
+          @case ('reject') { Reason (required) }
+          @case ('resubmit') { Attributes (JSON) }
+          @default { Reason (optional) }
+        }
+      </label>
+      <textarea [(ngModel)]="text" [rows]="k === 'resubmit' ? 8 : 3" [class.mono]="k === 'resubmit'"></textarea>
+    }
+    @if (formError() || error()) { <div class="error">{{ formError() || error() }}</div> }
+  </section>
+
+  @if (has('assign')) {
+    <section>
+      <h3>Reassign</h3>
+      <select [(ngModel)]="assignTo">
+        <option value="">— select user —</option>
+        @for (u of users(); track u.id) { <option [value]="u.id">{{ u.name }}</option> }
+      </select>
+      <input type="text" [(ngModel)]="assignReason" placeholder="Reason (optional)" />
+      <button class="secondary" [disabled]="busy() || !assignTo" (click)="doAssign()">Assign</button>
+    </section>
+  }
+
+  <section>
+    <h3>History</h3>
+    @for (e of events(); track $index) {
+      <div class="event">
+        <b>{{ eventText(e) }}</b>
+        <span class="muted">{{ (e.createdAt ?? e.occurredAt) | date:'short' }}</span>
+        @if (e.reason) { <div>{{ e.reason }}</div> }
+      </div>
+    } @empty { <p class="muted">No events.</p> }
+  </section>
+
+  <footer>
+    @if (has('release')) {
+      <button class="cancel" [disabled]="busy()" (click)="release.emit()">Release</button>
+    }
+    <button class="cancel" (click)="close.emit()">Cancel</button>
+    <button class="submit" [disabled]="busy() || !selected()" (click)="submit()">
+      {{ busy() ? 'Submitting…' : 'Submit' + (selected() ? ' — ' + selected()!.label : '') }}
+    </button>
+  </footer>
+</aside>

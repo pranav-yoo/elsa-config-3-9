@@ -1,0 +1,39 @@
+<header>
+  <h1><span class="logo">ilworkflow</span> Tasks</h1>
+  <app-user-select [users]="users()" [selectedId]="selectedId()" (userChange)="selectUser($event)" />
+</header>
+
+<main>
+  @if (error()) { <div class="error">{{ error() }}</div> }
+
+  @if (!token()) {
+    <p class="muted">Select a user to load their tasks.</p>
+  } @else {
+    <div class="tabs">
+      @for (s of visibleScopes(); track s) {
+        <button [class.active]="scope() === s" (click)="setScope(s)">{{ s }}</button>
+      }
+      <button (click)="load()">↻ Refresh</button>
+    </div>
+    <div class="filters">
+      <span>Status:</span>
+      @for (st of statuses; track st) {
+        <button [class.active]="status() === st" (click)="setStatus(st)">{{ st }}</button>
+      }
+    </div>
+
+    @if (loading()) {
+      <p class="muted">Loading…</p>
+    } @else if (!tasks().length) {
+      <p class="muted">No {{ scope() }} tasks.</p>
+    } @else {
+      <app-task-table [tasks]="tasks()" [busy]="busy()" (claim)="claim($event)" (open)="openTask($event)" />
+    }
+
+    <details><summary>User token</summary><pre>{{ token() }}</pre></details>
+  }
+</main>
+
+@if (detail(); as d) {
+  <app-task-detail [task]="d" [busy]="busy()" [error]="error()" [events]="events()" [users]="users()" (release)="release()" (assign)="assign($event)" (close)="detail.set(null)" (submitted)="submit($event)" />
+}

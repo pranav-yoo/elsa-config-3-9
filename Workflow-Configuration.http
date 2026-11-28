@@ -26,37 +26,18 @@ Content-Type: application/json
 }
 
 
-### Add the conditional attribute to the catalog
-# Reuse the existing field if this definition ID already has claimAmount. The workflow makes it mandatory.
-# @name createAmountField
-POST {{baseUrl}}/api/workflow-attributes
-Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
-Content-Type: application/json
-
-{
-  "definitionId": "{{definitionId}}",
-  "attribute": {
-    "key": "claimAmount",
-    "type": "Decimal",
-    "required": true,
-    "minimum": 0
-  }
-}
-
-
 ### Create configuration + native Elsa draft
-# Missing/zero id creates. Conditions are ordered; the first match wins. The API maps claimAmount from the catalog.
+# No workflow_version, so this creates the definition and its first version. Omit workflow_definition_id too to get a generated one. Attributes are not configurable for now: the API stores an empty attributes list.
 # @name createConfiguration
 POST {{baseUrl}}/api/workflow-configurations
 Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
 {
-  "id": 0,
-  "definition_id": "{{definitionId}}",
+  "workflow_definition_id": "{{definitionId}}",
   "configuration": {
     "name": "Configured Expense Claim",
-    "startStage": "A",
+    "start_stage": "A",
     "stages": [
       {
         "key": "A",
@@ -68,14 +49,10 @@ Content-Type: application/json
             "{{amyId}}"
           ]
         },
-        "approveTo": {
-          "kind": "Stage",
-          "stageKey": "B"
-        },
-        "rejectTo": {
-          "kind": "Correction",
-          "stageKey": "A"
-        }
+        "actions": [
+          { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Stage", "stage_key": "B" } },
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Correction", "stage_key": "A" }, "require_reason": true }
+        ]
       },
       {
         "key": "B",
@@ -86,54 +63,29 @@ Content-Type: application/json
             "{{bobId}}"
           ]
         },
-        "approveTo": {
-          "kind": "Stage",
-          "stageKey": "D"
-        },
-        "rejectTo": {
-          "kind": "Stage",
-          "stageKey": "A"
-        },
-        "approveRules": [
+        "actions": [
           {
-            "when": {
-              "attribute": "claimAmount",
-              "operator": "GreaterThan",
-              "value": 5000
-            },
-            "destination": {
-              "kind": "Stage",
-              "stageKey": "C"
-            }
-          }
+            "key": "APPROVE",
+            "label": "Approve",
+            "destination": { "kind": "Stage", "stage_key": "D" }
+          },
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Stage", "stage_key": "A" }, "require_reason": true },
+          { "key": "REFER_UW", "label": "Refer to UW", "destination": { "kind": "Stage", "stage_key": "C" }, "require_reason": true }
         ]
       },
       {
         "key": "C",
         "title": "C High-value approval",
         "assignment": {
-          "policy": "Condition",
+          "policy": "Bucket",
           "members": [
             "{{claraId}}"
-          ],
-          "rules": [
-            {
-              "when": {
-                "attribute": "claimAmount",
-                "operator": "GreaterThan",
-                "value": 5000
-              },
-              "userId": "{{claraId}}"
-            }
           ]
         },
-        "approveTo": {
-          "kind": "Stage",
-          "stageKey": "D"
-        },
-        "rejectTo": {
-          "kind": "Rejected"
-        }
+        "actions": [
+          { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Stage", "stage_key": "D" } },
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Rejected" }, "require_reason": true }
+        ]
       },
       {
         "key": "D",
@@ -142,16 +94,12 @@ Content-Type: application/json
           "policy": "Specific",
           "members": [
             "{{danId}}"
-          ],
-          "userId": "{{danId}}"
+          ]
         },
-        "approveTo": {
-          "kind": "Approved"
-        },
-        "rejectTo": {
-          "kind": "Correction",
-          "stageKey": "D"
-        }
+        "actions": [
+          { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Approved" } },
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Correction", "stage_key": "D" }, "require_reason": true }
+        ]
       }
     ]
   }
@@ -159,25 +107,32 @@ Content-Type: application/json
 
 
 ### Read draft
+# POST so both keys travel in the body. workflow_version is optional: omit it to read the latest version.
 # @name readConfiguration
-GET {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.id}}
+POST {{baseUrl}}/api/workflow-configurations/get
 Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "workflow_definition_id": "{{createConfiguration.response.body.$.data.workflow_definition_id}}",
+  "workflow_version": {{createConfiguration.response.body.$.data.workflow_version}}
+}
 
 
 ### Update same draft using POST
-# No PUT API. Missing positive id returns 404. Stale revision or editing a published version returns 409. Object references are intentionally unquoted JSON.
+# Same endpoint as create. Pass BOTH workflow_definition_id and workflow_version to update that draft; the response revision grows on every save and is never sent. An unknown version number returns 404; editing a published version returns 409. Object references are intentionally unquoted JSON.
 # @name updateConfiguration
 POST {{baseUrl}}/api/workflow-configurations
 Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
 {
-  "id": {{readConfiguration.response.body.$.id}},
-  "expectedRevision": {{readConfiguration.response.body.$.revision}},
+  "workflow_definition_id": "{{readConfiguration.response.body.$.data.workflow_definition_id}}",
+  "workflow_version": {{readConfiguration.response.body.$.data.workflow_version}},
   "configuration": {
-    "name": "{{readConfiguration.response.body.$.configuration.name}}",
-    "startStage": "{{readConfiguration.response.body.$.configuration.startStage}}",
-    "stages": {{readConfiguration.response.body.$.configuration.stages}}
+    "name": "{{readConfiguration.response.body.$.data.configuration.name}}",
+    "start_stage": "{{readConfiguration.response.body.$.data.configuration.start_stage}}",
+    "stages": {{readConfiguration.response.body.$.data.configuration.stages}}
   }
 }
 
@@ -185,30 +140,31 @@ Content-Type: application/json
 ### Validate without publishing
 # 200 valid=true; FluentValidation failures return 400 with field/message errors.
 # @name validateConfiguration
-POST {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.id}}/validate
+POST {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.data.workflow_definition_id}}/versions/{{createConfiguration.response.body.$.data.workflow_version}}/validate
 Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
-Content-Type: application/json
-
-{}
 
 
 ### Publish exact Elsa version
-# Copy returned definitionId into Ticket-Workflow.http. This version is now immutable.
+# Copy workflow_definition_id into Ticket-Workflow.http. This version is now immutable.
 # @name publishConfiguration
-POST {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.id}}/publish
+POST {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.data.workflow_definition_id}}/versions/{{createConfiguration.response.body.$.data.workflow_version}}/publish
 Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
-Content-Type: application/json
-
-{"expectedRevision": {{updateConfiguration.response.body.$.revision}}}
 
 # END MAIN SEQUENCE
 
-### OPTIONAL next editable draft
-# Returns a NEW configuration id and Elsa version; edit that id with POST. Existing instances remain pinned to their original version.
-# @name nextDraft
-POST {{baseUrl}}/api/workflow-configurations/{{createConfiguration.response.body.$.id}}/next-draft
+### OPTIONAL next version
+# A definition id WITHOUT workflow_version creates the next version (the response carries its new workflow_version number). Edit it by sending both. Only one open draft per definition; existing instances remain pinned to their original version.
+# @name nextVersion
+POST {{baseUrl}}/api/workflow-configurations
 Authorization: Bearer {{configuratorLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
-{"expectedRevision": {{publishConfiguration.response.body.$.revision}}}
+{
+  "workflow_definition_id": "{{publishConfiguration.response.body.$.data.workflow_definition_id}}",
+  "configuration": {
+    "name": "{{publishConfiguration.response.body.$.data.configuration.name}}",
+    "start_stage": "{{publishConfiguration.response.body.$.data.configuration.start_stage}}",
+    "stages": {{publishConfiguration.response.body.$.data.configuration.stages}}
+  }
+}
 

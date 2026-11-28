@@ -4,175 +4,185 @@ using Elsa.Common.Models;
 using Elsa.Workflows.Management;
 using Elsa.Workflows.Management.Entities;
 using Elsa.Workflows.Management.Filters;
+using Elsa.Workflows.Models;
 using FluentValidation;
 using IlWorkflow.Infrastructure.Persistence;
-using IlWorkflow.Api.Workflows;
+using IlWorkflow.Infrastructure.Workflows;
 using Microsoft.EntityFrameworkCore;
 
 namespace IlWorkflow.Infrastructure.Configuration;
 
-/// <summary>A small facade over Elsa's draft/publish lifecycle; not another ticket-type lifecycle.</summary>
-public sealed class WorkflowConfigurationService(ApplicationDbContext db, IWorkflowDefinitionPublisher publisher,
-    IWorkflowDefinitionStore definitions, WorkflowDefinitionBuilder builder, WorkflowConfigurationValidator validator) : IWorkflowConfigurationService
+/// <summary>
+/// Saves, validates and publishes workflow configurations. Elsa owns drafts, versions and publishing;
+/// this service keeps one <see cref="WorkflowConfiguration"/> row next to each Elsa version.
+///
+/// Save request rules:
+/// <list type="bullet">
+/// <item>No workflow_definition_id: create a new definition (Elsa generates the ID) at version 1.</item>
+/// <item>workflow_definition_id only: create that definition, or its next version when it already exists.</item>
+/// <item>workflow_definition_id + workflow_version: update that draft (published versions are read-only).</item>
+/// </list>
+/// </summary>
+public sealed class WorkflowConfigurationService(
+    ApplicationDbContext db,
+    IWorkflowDefinitionPublisher publisher,
+    IWorkflowDefinitionStore definitions,
+    WorkflowDefinitionBuilder builder,
+    WorkflowConfigurationValidator validator) : IWorkflowConfigurationService
 {
-    public static string Hash(string source) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source)));
-    public async Task<WorkflowConfiguration> GetAsync(long id, CancellationToken ct) =>
-        await db.WorkflowConfigurations.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == "", ct) ?? throw new ApiException(404, "Configuration not found.");
+    public async Task<WorkflowConfiguration> GetAsync(string workflowDefinitionId, int? workflowVersion, CancellationToken ct)
+    {
+        var versions = db.WorkflowConfigurations.Where(x => x.TenantId == "" && x.DefinitionId == workflowDefinitionId);
+        var row = workflowVersion is { } version
+            ? await versions.SingleOrDefaultAsync(x => x.DefinitionVersion == version, ct)
+            : await versions.OrderByDescending(x => x.DefinitionVersion).FirstOrDefaultAsync(ct);
+        return row ?? throw new ApiException(404, "Configuration version not found.");
+    }
 
-    /// <summary>POST without an ID creates; positive IDs update an editable draft using ExpectedRevision.</summary>
     public async Task<WorkflowConfiguration> SaveAsync(SaveConfigurationRequest request, CancellationToken ct)
     {
-        if (request.Id is < 0) throw new ApiException(400, "ID cannot be negative.");
-        if (request.Configuration is null) throw new ApiException(400, "Configuration is required.");
-        if (request.DefinitionId is not null) await new DefinitionIdValidator().ValidateAndThrowAsync(request.DefinitionId, ct);
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
-        WorkflowConfiguration row;
-        WorkflowDefinition definition;
-        if (request.Id is null or 0)
-        {
-            if (request.DefinitionId is not null)
-            {
-                await LockAsync(request.DefinitionId, ct);
-                if (await definitions.FindAsync(new WorkflowDefinitionFilter { DefinitionId = request.DefinitionId, VersionOptions = VersionOptions.Latest }, ct) is not null)
-                    throw new ApiException(409, "Definition ID already exists. Update its draft or create its next version.");
-                definition = await publisher.NewAsync(cancellationToken: ct);
-                definition.DefinitionId = request.DefinitionId;
-            }
-            else definition = await publisher.NewAsync(cancellationToken: ct);
-            row = new() { DefinitionId = definition.DefinitionId, DefinitionVersionId = definition.Id, DefinitionVersion = definition.Version };
-            db.WorkflowConfigurations.Add(row);
-        }
-        else
-        {
-            row = await GetAsync(request.Id.Value, ct);
-            if (request.DefinitionId is not null && request.DefinitionId != row.DefinitionId)
-                throw new ApiException(400, "Definition ID cannot be changed on an existing configuration.");
-            await LockAsync(row.DefinitionId, ct);
-            await db.Entry(row).ReloadAsync(ct);
-            CheckRevision(row, request.ExpectedRevision);
-            if (row.Frozen) throw new ApiException(409, "Published snapshots cannot be edited. Create the next draft.");
-            definition = await definitions.FindAsync(new WorkflowDefinitionFilter { Id = row.DefinitionVersionId }, ct) ?? throw new ApiException(409, "Elsa draft is missing.");
-            if (definition.IsPublished) throw new ApiException(409, "Elsa version is already published.");
-            row.Revision++;
-        }
-        var input = request.Configuration;
-        var setup = await MapConditionalAttributesAsync(row.DefinitionId, new WorkflowSetup(input.Name, [], input.StartStage, input.Stages), ct);
+        await new SaveConfigurationRequestValidator().ValidateAndThrowAsync(request, ct);
+        var definitionId = string.IsNullOrWhiteSpace(request.WorkflowDefinitionId) ? null : request.WorkflowDefinitionId;
+        var setup = request.Configuration.ToSetup();
+        // Validate before touching Elsa, so a bad request never leaves an orphan draft behind.
         await validator.ValidateAndThrowAsync(setup, ct);
-        row.UsesAttributeCatalog = true;
-        row.ConfigurationJson = ConfigurationJson.Write(setup);
-        row.Ready = false;
-        ApplySetup(definition, setup);
+
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var (row, definition) = request.WorkflowVersion is { } version
+            ? await OpenDraftAsync(definitionId!, version, ct)
+            : await CreateVersionAsync(definitionId, ct);
+
+        definition.Name = setup.Name;
+        definition.MaterializerName = "Json";
+        definition.StringData = builder.Build(setup);
+        definition.Inputs = [new() { Name = TicketState.Attributes, Type = typeof(object) }, new() { Name = TicketState.Requester, Type = typeof(string) }];
+        definition.Outputs = TicketOutputs();
         await publisher.SaveDraftAsync(definition, ct);
+
+        // Elsa assigns these when the draft is stored, so copy them afterwards.
+        row.DefinitionId = definition.DefinitionId;
+        row.DefinitionVersionId = definition.Id;
         row.DefinitionVersion = definition.Version;
-        var storedDefinition = await definitions.FindAsync(new WorkflowDefinitionFilter { Id = definition.Id }, ct);
-        row.DefinitionHash = Hash(storedDefinition!.StringData ?? "");
+        row.ConfigurationJson = ConfigurationJson.Write(setup);
+        row.DefinitionHash = await StoredHashAsync(definition.Id, ct);
+        row.Ready = false;
+
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
         return row;
     }
-    private async Task<WorkflowSetup> MapConditionalAttributesAsync(string definitionId, WorkflowSetup setup, CancellationToken ct)
+
+    public async Task ValidateAsync(string workflowDefinitionId, int workflowVersion, CancellationToken ct)
     {
-        // Collect keys from both kinds of conditions. Leave malformed rules to FluentValidation.
-        var keys = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var stage in setup.Stages ?? [])
-        {
-            foreach (var rule in stage?.ApproveRules ?? [])
-                if (rule?.When?.Attribute is { } key) keys.Add(key);
-            foreach (var rule in stage?.Assignment?.Rules ?? [])
-                if (rule?.When?.Attribute is { } key) keys.Add(key);
-        }
-
-        if (keys.Count == 0) return setup with { Attributes = [] };
-
-        var fields = await db.WorkflowAttributes.AsNoTracking()
-            .Where(x => x.DefinitionId == definitionId && x.Status == AttributeStatus.Active && keys.Contains(x.Key))
-            .OrderBy(x => x.Id).ToArrayAsync(ct);
-        return setup with { Attributes = fields.Select(x => x.ToDefinition() with { Required = true }).ToArray() };
+        var row = await GetAsync(workflowDefinitionId, workflowVersion, ct);
+        await validator.ValidateAndThrowAsync(ConfigurationJson.Read<WorkflowSetup>(row.ConfigurationJson), ct);
     }
 
-    public async Task ValidateAsync(long id, CancellationToken ct) => await validator.ValidateAndThrowAsync(ConfigurationJson.Read<WorkflowSetup>((await GetAsync(id, ct)).ConfigurationJson), ct);
-
-    /// <summary>Ready is committed only after native publication succeeds. Failed partial publication cannot execute.</summary>
-    public async Task<WorkflowConfiguration> PublishAsync(long id, long expectedRevision, CancellationToken ct)
+    /// <summary>Publishes through Elsa. The row becomes Ready (tickets may start) only after Elsa succeeds.</summary>
+    public async Task<WorkflowConfiguration> PublishAsync(string workflowDefinitionId, int workflowVersion, CancellationToken ct)
     {
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
-        var row = await GetAsync(id, ct);
-        await LockAsync(row.DefinitionId, ct);
+        var row = await GetAsync(workflowDefinitionId, workflowVersion, ct);
+        await LockDefinitionAsync(row.DefinitionId, ct);
         await db.Entry(row).ReloadAsync(ct);
-        CheckRevision(row, expectedRevision);
-        if (row.Ready) return row;
+        if (row.Ready) return row; // already published: publishing twice is harmless
+
+        // Users or roles may have changed since the draft was saved.
         await validator.ValidateAndThrowAsync(ConfigurationJson.Read<WorkflowSetup>(row.ConfigurationJson), ct);
-        var definition = await definitions.FindAsync(new WorkflowDefinitionFilter { Id = row.DefinitionVersionId }, ct) ?? throw new ApiException(409, "Elsa draft is missing.");
-        if (Hash(definition.StringData ?? "") != row.DefinitionHash) throw new ApiException(409, "The generated Elsa draft changed outside configuration APIs. Save the draft again.");
+
+        var definition = await FindVersionAsync(row.DefinitionVersionId, ct);
+        if (Hash(definition.StringData) != row.DefinitionHash)
+            throw new ApiException(409, "The Elsa draft was changed outside this API. Save the configuration again.");
+
         var result = await publisher.PublishAsync(definition, ct);
-        if (!result.Succeeded) throw new ApiException(400, "Elsa rejected the generated definition: " + string.Join("; ", result.ValidationErrors.Select(x => x.Message)));
-        var published = await definitions.FindAsync(new WorkflowDefinitionFilter { Id = definition.Id }, ct);
-        row.DefinitionHash = Hash(published!.StringData ?? "");
-        // Never reset Frozen after Elsa retracts this version when a newer version is published.
-        // The snapshot may still be referenced by a long-running instance.
-        row.Frozen = true;
+        if (!result.Succeeded)
+            throw new ApiException(400, "Elsa rejected the definition: " + string.Join("; ", result.ValidationErrors.Select(error => error.Message)));
+
+        row.DefinitionHash = await StoredHashAsync(definition.Id, ct);
+        row.Frozen = true; // never reset: running tickets may still use this version
         row.Ready = true;
         row.Revision++;
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
         return row;
     }
-    public async Task<WorkflowConfiguration> CreateNextDraftAsync(long id, long expectedRevision, CancellationToken ct)
+
+    /// <summary>SHA-256 of the generated Elsa JSON. Used to detect edits made outside this API.</summary>
+    public static string Hash(string? elsaJson) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(elsaJson ?? "")));
+
+    private async Task<(WorkflowConfiguration Row, WorkflowDefinition Definition)> OpenDraftAsync(string definitionId, int version, CancellationToken ct)
     {
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
-        var source = await GetAsync(id, ct);
-        await LockAsync(source.DefinitionId, ct);
-        await db.Entry(source).ReloadAsync(ct);
-        CheckRevision(source, expectedRevision);
-        if (!source.Ready) throw new ApiException(409, "Publish the source version first.");
-        var existing = await db.WorkflowConfigurations.FirstOrDefaultAsync(x => x.DefinitionId == source.DefinitionId && !x.Frozen, ct);
-        if (existing is not null) return existing;
-        // Clone the active published native version, even when the requested source snapshot is historical.
-        // Rebuild from that source's configuration so its schema and generated graph remain aligned.
-        var setup = ConfigurationJson.Read<WorkflowSetup>(source.ConfigurationJson);
-        setup = await MapConditionalAttributesAsync(source.DefinitionId, setup, ct);
-        await validator.ValidateAndThrowAsync(setup, ct);
-        var draft = await publisher.GetDraftAsync(source.DefinitionId, VersionOptions.Published, ct) ?? throw new ApiException(409, "Published definition is missing.");
-        ApplySetup(draft, setup);
-        await publisher.SaveDraftAsync(draft, ct);
-        var storedDraft = await definitions.FindAsync(new WorkflowDefinitionFilter { Id = draft.Id }, ct);
-        var row = new WorkflowConfiguration { DefinitionId = draft.DefinitionId, DefinitionVersionId = draft.Id,
-            DefinitionVersion = draft.Version, ConfigurationJson = ConfigurationJson.Write(setup), UsesAttributeCatalog = true, DefinitionHash = Hash(storedDraft!.StringData ?? "") };
-        db.WorkflowConfigurations.Add(row);
-        await db.SaveChangesAsync(ct);
-        await transaction.CommitAsync(ct);
-        return row;
-    }
-    /// <summary>Keep graph, input metadata and outputs identical when saving or cloning a configuration.</summary>
-    private void ApplySetup(WorkflowDefinition definition, WorkflowSetup setup)
-    {
-        definition.Name = setup.Name;
-        definition.StringData = builder.Build(setup);
-        definition.MaterializerName = "Json";
-        // The snapshot contains only mapped condition fields. Native execute also accepts them in one object.
-        definition.Inputs = new List<Elsa.Workflows.Models.InputDefinition>
-        {
-            new() { Name = "attributes", Type = typeof(object) }, new() { Name = "requesterId", Type = typeof(string) }
-        };
-        foreach (var field in setup.Attributes)
-            definition.Inputs.Add(new() { Name = field.Key, Type = field.Type switch
-            {
-                AttributeType.Decimal => typeof(decimal), AttributeType.Integer => typeof(long), AttributeType.Boolean => typeof(bool), _ => typeof(string)
-            } });
-        definition.Outputs = new List<Elsa.Workflows.Models.OutputDefinition>
-        {
-            new() { Name = "ticketOutcome", Type = typeof(string) }, new() { Name = "requesterId", Type = typeof(string) },
-            new() { Name = "attributes", Type = typeof(object) }, new() { Name = "attributeRevision", Type = typeof(int) },
-            new() { Name = "attributeHistory", Type = typeof(object) }, new() { Name = "currentStage", Type = typeof(string) }
-        };
+        var row = await GetAsync(definitionId, version, ct);
+        await LockDefinitionAsync(row.DefinitionId, ct);
+        await db.Entry(row).ReloadAsync(ct); // re-read inside the lock
+
+        if (row.Frozen)
+            throw new ApiException(409, "Published versions cannot be edited. Omit workflow_version to create the next version.");
+        var definition = await FindVersionAsync(row.DefinitionVersionId, ct);
+        if (definition.IsPublished)
+            throw new ApiException(409, "This Elsa version is already published.");
+
+        row.Revision++;
+        return (row, definition);
     }
 
-    // The transaction owns this per-definition lock across application instances, not just threads in one process.
-    // Native Elsa contexts commit independently; Ready + hash checks are the admission gate, not a distributed transaction.
-    private Task<int> LockAsync(string definitionId, CancellationToken ct) =>
-        db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtextextended({definitionId}, 0))", ct);
-    private static void CheckRevision(WorkflowConfiguration row, long? revision)
+    private async Task<(WorkflowConfiguration Row, WorkflowDefinition Definition)> CreateVersionAsync(string? definitionId, CancellationToken ct)
     {
-        if (revision != row.Revision) throw new ApiException(409, "ExpectedRevision must match the current configuration revision.");
+        if (definitionId is not null)
+        {
+            await LockDefinitionAsync(definitionId, ct);
+            if (await DefinitionExistsAsync(definitionId, ct))
+                return await CreateNextVersionAsync(definitionId, ct);
+        }
+
+        var definition = await publisher.NewAsync(cancellationToken: ct);
+        if (definitionId is not null) definition.DefinitionId = definitionId;
+        return (AddRow(definition), definition);
     }
+
+    private async Task<(WorkflowConfiguration Row, WorkflowDefinition Definition)> CreateNextVersionAsync(string definitionId, CancellationToken ct)
+    {
+        var openDraft = await db.WorkflowConfigurations.FirstOrDefaultAsync(x => x.TenantId == "" && x.DefinitionId == definitionId && !x.Frozen, ct);
+        if (openDraft is not null)
+            throw new ApiException(409, $"Draft version {openDraft.DefinitionVersion} is still open. Update it (send its workflow_version) or publish it first.");
+        if (!await db.WorkflowConfigurations.AnyAsync(x => x.TenantId == "" && x.DefinitionId == definitionId, ct))
+            throw new ApiException(409, "This definition exists in Elsa but was not created through workflow configurations.");
+
+        var definition = await publisher.GetDraftAsync(definitionId, VersionOptions.Published, ct)
+            ?? throw new ApiException(409, "The published definition is missing.");
+        return (AddRow(definition), definition);
+    }
+
+    private WorkflowConfiguration AddRow(WorkflowDefinition definition)
+    {
+        var row = new WorkflowConfiguration { DefinitionId = definition.DefinitionId, DefinitionVersionId = definition.Id, DefinitionVersion = definition.Version };
+        db.WorkflowConfigurations.Add(row);
+        return row;
+    }
+
+    private async Task<bool> DefinitionExistsAsync(string definitionId, CancellationToken ct) =>
+        await definitions.FindAsync(new WorkflowDefinitionFilter { DefinitionId = definitionId, VersionOptions = VersionOptions.Latest }, ct) is not null;
+
+    private async Task<WorkflowDefinition> FindVersionAsync(string versionId, CancellationToken ct) =>
+        await definitions.FindAsync(new WorkflowDefinitionFilter { Id = versionId }, ct) ?? throw new ApiException(409, "The Elsa draft is missing.");
+
+    private async Task<string> StoredHashAsync(string versionId, CancellationToken ct) => Hash((await FindVersionAsync(versionId, ct)).StringData);
+
+    /// <summary>Workflow outputs a client can read from the instance (see <see cref="TicketState"/>).</summary>
+    private static List<OutputDefinition> TicketOutputs() =>
+    [
+        new() { Name = TicketState.Outcome, Type = typeof(string) },
+        new() { Name = TicketState.Requester, Type = typeof(string) },
+        new() { Name = TicketState.CurrentStage, Type = typeof(string) },
+        new() { Name = TicketState.Attributes, Type = typeof(object) },
+        new() { Name = TicketState.AttributeRevision, Type = typeof(int) },
+        new() { Name = TicketState.AttributeHistory, Type = typeof(object) }
+    ];
+
+    /// <summary>
+    /// PostgreSQL advisory lock held until the transaction ends. Two saves of the same definition (even on
+    /// different servers) run one after the other instead of racing.
+    /// </summary>
+    private Task<int> LockDefinitionAsync(string definitionId, CancellationToken ct) =>
+        db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtextextended({definitionId}, 0))", ct);
 }

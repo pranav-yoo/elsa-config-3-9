@@ -1,31 +1,43 @@
 using System.Text.Json;
 using Elsa.UserTasks.Contracts;
 using Elsa.UserTasks.Models;
-using FluentValidation;
-using IlWorkflow.Infrastructure.Configuration;
 
-namespace IlWorkflow.Api.Workflows;
+namespace IlWorkflow.Infrastructure.Workflows;
 
-/// <summary>Native task completion always passes through this provider; direct API calls cannot skip validation.</summary>
+/// <summary>
+/// Elsa calls this provider for EVERY task completion (through /api/tasks or the native /elsa/api/user-tasks),
+/// so the business rules in <see cref="TaskDecisionValidator"/> can never be skipped.
+/// </summary>
 public sealed class TicketFormProvider : IUserTaskFormProvider
 {
-    public string Name => "configured-ticket";
+    public const string ProviderName = "configured-ticket";
+    public const string CorrectionFormKey = "correction";
+    private const string ReviewPrefix = "review:";
+
+    /// <summary>Review tasks carry their stage in the form key, for example "review:B".</summary>
+    public static string ReviewFormKey(string stageKey) => ReviewPrefix + stageKey;
+
+    public string Name => ProviderName;
+
     public Task<ResolvedUserTaskForm?> ResolveAsync(UserTaskFormReference reference, CancellationToken cancellationToken = default)
     {
-        var setup = ConfigurationJson.Read<WorkflowSetup>(reference.Binding!);
-        return Task.FromResult<ResolvedUserTaskForm?>(new(reference, "1", new Dictionary<string, object?>())
-        {
-            Fields = reference.Key == "correction"
-                ? setup.Attributes.Select(x => new UserTaskFormFieldDescriptor(x.Key, x.Key, x.Type.ToString(), x.Required)).ToArray()
-                : [new UserTaskFormFieldDescriptor("reason", "Reason required for rejection")]
-        });
+        UserTaskFormFieldDescriptor[] fields = reference.Key == CorrectionFormKey
+            ? [new("attributes", "Attributes")]
+            : [new("reason", "Reason"), new("comment", "Comment")];
+        return Task.FromResult<ResolvedUserTaskForm?>(new(reference, "1", new Dictionary<string, object?>()) { Fields = fields });
     }
-    public async Task<UserTaskFormValidationResult> ValidateAndNormalizeAsync(ResolvedUserTaskForm form, string actionKey, JsonElement data, CancellationToken cancellationToken = default)
+
+    public async Task<UserTaskFormValidationResult> ValidateAndNormalizeAsync(ResolvedUserTaskForm form, string actionKey, JsonElement data,
+        CancellationToken cancellationToken = default)
     {
-        // Binding carries the published snapshot pinned when this task was created. Reading the
-        // latest configuration here would silently change the rules for an already pending task.
+        // Binding is the setup snapshot saved when the task was created, so rules cannot change for a pending task.
         var setup = ConfigurationJson.Read<WorkflowSetup>(form.Requested.Binding!);
-        var result = await new TaskDecisionValidator(setup, form.Requested.Key == "correction").ValidateAsync(new DecisionData(actionKey, data), cancellationToken);
-        return result.IsValid ? new(true, data.Clone()) : new(false, Errors: result.Errors.Select(x => x.ErrorMessage).ToArray());
+        var key = form.Requested.Key;
+        var stage = key.StartsWith(ReviewPrefix, StringComparison.Ordinal) ? setup.FindStage(key[ReviewPrefix.Length..]) : null;
+
+        var result = await new TaskDecisionValidator(stage).ValidateAsync(new DecisionData(actionKey, data), cancellationToken);
+        return result.IsValid
+            ? new(true, data.Clone())
+            : new(false, Errors: result.Errors.Select(error => error.ErrorMessage).ToArray());
     }
 }

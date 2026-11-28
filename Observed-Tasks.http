@@ -1,11 +1,8 @@
-# Run in order. Generate separate Username demo tokens with New-TestAccessToken.ps1
-# using -Identity clara, -Identity dan, and -Identity john. Paste the results below.
+# Run in order. Users are the local Elsa accounts created in Authentication.http.
 # Change definitionId before creating another demo definition.
 @baseUrl = http://localhost:5000
-@definitionId =       
-@claraToken = PASTE_CLARA_TOKEN
-@danToken = eyJhbGciOiJodHRwOi8vd3d3LnczLm9yZy8yMDAxLzA0L3htbGRzaWctbW9yZSNobWFjLXNoYTI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwOi8vZWxzYS5hcGkiLCJpc3MiOiJodHRwOi8vZWxzYS5hcGkiLCJleHAiOjE3OTQzMTY2NzYsInN1YiI6ImI4ZDIyN2VlYzdmOWI4ZTkiLCJuYW1lIjoiY29uZmlndXJlZC1kYW4iLCJlbHNhOnBlcm1pc3Npb25fc3RhbXAiOiI5QjZGOTU3NzM2QkZENUE3IiwiaHR0cDovL3NjaGVtYXMubWljcm9zb2Z0LmNvbS93cy8yMDA4LzA2L2lkZW50aXR5L2NsYWltcy9yb2xlIjoiQXBwcm92ZXIiLCJwZXJtaXNzaW9ucyI6WyJ1c2VyLXRhc2tzOnZpZXciLCJ1c2VyLXRhc2tzOmNsYWltIiwidXNlci10YXNrczpjb21wbGV0ZSIsIndvcmtmbG93cy9pbnN0YW5jZXM6dmlldyJdLCJ0b2tlbl91c2UiOiJhY2Nlc3MiLCJpYXQiOjE3OTQzMTU3NzYsIm5iZiI6MTc5NDMxNTc3Nn0.DQFWqdKOdbd3QClrXKugPZOTn4apb77-oYW7Z_xYpqw
-@johnToken = PASTE_JOHN_TOKEN
+@definitionId = observed-claim-v1
+@samplePassword = Password123!
 
 ### 1. Log in as the internal admin
 # @name observerAdmin
@@ -14,13 +11,26 @@ Content-Type: application/json
 
 { "username": "admin", "password": "password" }
 
-### 2. Register the condition field so the task has submitted data
-# @name observerAmount
-POST {{baseUrl}}/api/workflow-attributes
-Authorization: Bearer {{observerAdmin.response.body.$.accessToken}}
+### 1a. Log in Clara
+# @name claraLogin
+POST {{baseUrl}}/elsa/api/identity/login
 Content-Type: application/json
 
-{ "definitionId": "{{definitionId}}", "attribute": { "key": "claimAmount", "type": "Decimal" } }
+{ "username": "configured-clara", "password": "{{samplePassword}}" }
+
+### 1b. Log in Dan
+# @name danLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{ "username": "configured-dan", "password": "{{samplePassword}}" }
+
+### 1c. Log in an outsider (not in any stage)
+# @name outsiderLogin
+POST {{baseUrl}}/elsa/api/identity/login
+Content-Type: application/json
+
+{ "username": "configured-alice", "password": "{{samplePassword}}" }
 
 ### 3. Configure C to be visible to D's members
 # @name observerDraft
@@ -29,26 +39,26 @@ Authorization: Bearer {{observerAdmin.response.body.$.accessToken}}
 Content-Type: application/json
 
 {
-  "definition_id": "{{definitionId}}",
+  "workflow_definition_id": "{{definitionId}}",
   "configuration": {
     "name": "Claim review with read-only visibility",
-    "startStage": "C",
+    "start_stage": "C",
     "stages": [
       {
-        "key": "C", "title": "C - Clara review", "viewableByStages": ["D"],
-        "assignment": { "policy": "Specific", "members": ["57cdff015b09629b"], "userId": "57cdff015b09629b" },
-        "approveTo": { "kind": "Stage", "stageKey": "D" },
-        "approveRules": [{
-          "when": { "attribute": "claimAmount", "operator": "GreaterThan", "value": 5000 },
-          "destination": { "kind": "Stage", "stageKey": "D" }
-        }],
-        "rejectTo": { "kind": "Rejected" }
+        "key": "C", "title": "C - Clara review", "viewable_by_stages": ["D"],
+        "assignment": { "policy": "Specific", "members": ["57cdff015b09629b"] },
+        "actions": [
+          { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Stage", "stage_key": "D" }  },
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Rejected" }, "require_reason": true }
+        ]
       },
       {
         "key": "D", "title": "D - Dan review",
-        "assignment": { "policy": "Specific", "members": ["b8d227eec7f9b8e9"], "userId": "b8d227eec7f9b8e9" },
-        "approveTo": { "kind": "Approved" },
-        "rejectTo": { "kind": "Rejected" }
+        "assignment": { "policy": "Specific", "members": ["b8d227eec7f9b8e9"] },
+        "actions": [
+          { "key": "APPROVE", "label": "Approve", "destination": { "kind": "Approved" } },
+          { "key": "REJECT", "label": "Reject", "destination": { "kind": "Rejected" }, "require_reason": true }
+        ]
       }
     ]
   }
@@ -56,11 +66,8 @@ Content-Type: application/json
 
 ### 4. Publish
 # @name observerPublished
-POST {{baseUrl}}/api/workflow-configurations/{{observerDraft.response.body.$.id}}/publish
+POST {{baseUrl}}/api/workflow-configurations/{{observerDraft.response.body.$.data.workflow_definition_id}}/versions/{{observerDraft.response.body.$.data.workflow_version}}/publish
 Authorization: Bearer {{observerAdmin.response.body.$.accessToken}}
-Content-Type: application/json
-
-{ "expectedRevision": {{observerDraft.response.body.$.revision}} }
 
 ### 5. Start the workflow as admin
 # @name observerRun
@@ -68,50 +75,50 @@ POST {{baseUrl}}/elsa/api/workflow-definitions/{{definitionId}}/execute
 Authorization: Bearer {{observerAdmin.response.body.$.accessToken}}
 Content-Type: application/json
 
-{ "input": { "attributes": { "claimAmount": 6000 } } }
+{ "input": { "attributes": {} } }
 
 ### 6. Dan can already see C in Observed
 # @name observedTasks
 GET {{baseUrl}}/elsa/api/user-tasks?scope=observed&workflowInstanceId={{observerRun.response.body.$.workflowState.id}}&includeTotalCount=true
-Authorization: Bearer {{danToken}}
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
 
 ### 7. Dan has no assigned task yet
 # @name observerAssigned
 GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&workflowInstanceId={{observerRun.response.body.$.workflowState.id}}
-Authorization: Bearer {{danToken}}
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
 
 ### 8. Dan has no claimable task here
 # @name observerAvailable
 GET {{baseUrl}}/elsa/api/user-tasks?scope=available&workflowInstanceId={{observerRun.response.body.$.workflowState.id}}
-Authorization: Bearer {{danToken}}
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
 
 ### 9. Dan reads C's detail and submitted data
 # Check allowedActions. The native actions array describes the form, not permission to act.
 # @name observedDetail
 GET {{baseUrl}}/elsa/api/user-tasks/{{observedTasks.response.body.$.items[0].id}}
-Authorization: Bearer {{danToken}}
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
 
 ### 10. Dan reads C's task history
 # @name observedEvents
 GET {{baseUrl}}/elsa/api/user-tasks/{{observedDetail.response.body.$.id}}/events
-Authorization: Bearer {{danToken}}
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
 
-### 11. John cannot discover C
+### 11. Outsider cannot discover C
 # @name outsiderObserved
 GET {{baseUrl}}/elsa/api/user-tasks?scope=observed&workflowInstanceId={{observerRun.response.body.$.workflowState.id}}&includeTotalCount=true
-Authorization: Bearer {{johnToken}}
+Authorization: Bearer {{outsiderLogin.response.body.$.accessToken}}
 
-### 12. John cannot open C by ID
+### 12. Outsider cannot open C by ID
 # @name outsiderDetail
 # @expect 404
 GET {{baseUrl}}/elsa/api/user-tasks/{{observedDetail.response.body.$.id}}
-Authorization: Bearer {{johnToken}}
+Authorization: Bearer {{outsiderLogin.response.body.$.accessToken}}
 
 ### 13. Dan cannot claim C
 # @name observerClaimDenied
 # @expect 403 404
 POST {{baseUrl}}/elsa/api/user-tasks/{{observedDetail.response.body.$.id}}/claim
-Authorization: Bearer {{danToken}}
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
 { "expectedRevision": {{observedDetail.response.body.$.revision}}, "operationId": "{{$guid}}" }
@@ -120,7 +127,7 @@ Content-Type: application/json
 # @name observerApproveDenied
 # @expect 403 404
 POST {{baseUrl}}/elsa/api/user-tasks/{{observedDetail.response.body.$.id}}/complete
-Authorization: Bearer {{danToken}}
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
 { "expectedRevision": {{observedDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "APPROVE", "data": {} }
@@ -128,7 +135,7 @@ Content-Type: application/json
 ### 15. Clara approves her own C task
 # @name observedClaraApprove
 POST {{baseUrl}}/elsa/api/user-tasks/{{observedDetail.response.body.$.id}}/complete
-Authorization: Bearer {{claraToken}}
+Authorization: Bearer {{claraLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
 { "expectedRevision": {{observedDetail.response.body.$.revision}}, "operationId": "{{$guid}}", "actionKey": "APPROVE", "data": {} }
@@ -136,12 +143,12 @@ Content-Type: application/json
 ### 16. Dan finds his own D task
 # @name observedDanTask
 GET {{baseUrl}}/elsa/api/user-tasks?scope=assigned&status=Assigned&workflowInstanceId={{observerRun.response.body.$.workflowState.id}}
-Authorization: Bearer {{danToken}}
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
 
 ### 17. Dan approves D
 # @name observedDanApprove
 POST {{baseUrl}}/elsa/api/user-tasks/{{observedDanTask.response.body.$.items[0].id}}/complete
-Authorization: Bearer {{danToken}}
+Authorization: Bearer {{danLogin.response.body.$.accessToken}}
 Content-Type: application/json
 
 { "expectedRevision": {{observedDanTask.response.body.$.items[0].revision}}, "operationId": "{{$guid}}", "actionKey": "APPROVE", "data": {} }

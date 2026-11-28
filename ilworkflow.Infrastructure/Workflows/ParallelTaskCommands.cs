@@ -7,7 +7,7 @@ using Elsa.Workflows.Runtime;
 using Elsa.Workflows.Runtime.Filters;
 using Npgsql;
 
-namespace IlWorkflow.Api.Workflows;
+namespace IlWorkflow.Infrastructure.Workflows;
 
 /// <summary>Elsa reserves completion on a task before resuming its bookmark. Serialize both steps
 /// across sibling tasks so a losing task never reserves an approval while its bookmark is being removed.</summary>
@@ -56,13 +56,21 @@ public sealed class ParallelTaskCommands(IConfiguration configuration, IUserTask
 
     public Task ResumeAsync(UserTask task, UserTaskStimulus stimulus, CancellationToken ct) =>
         task.TaskType != ParallelTicketReview.TaskType
-            ? nativeResumer.ResumeAsync(task, stimulus, ct)
+            ? ResumeAndFinalizeAsync(task, stimulus, ct)
             : WithLockAsync(task.WorkflowInstanceId, async () =>
             {
                 if (await HasBookmarkAsync(task, ct)) await nativeResumer.ResumeAsync(task, stimulus, ct);
                 await FinalizeIfRemovedAsync(task, ct);
                 await FinalizeUnansweredBranchesAsync(task, ct);
             }, ct);
+
+    // Without this, a completed task stays "Completing" until Elsa's reconciliation worker
+    // (every 15 minutes) notices its bookmark is gone. Finalize as soon as the workflow resumed.
+    private async Task ResumeAndFinalizeAsync(UserTask task, UserTaskStimulus stimulus, CancellationToken ct)
+    {
+        await nativeResumer.ResumeAsync(task, stimulus, ct);
+        await FinalizeIfRemovedAsync(task, ct);
+    }
 
     private async Task FinalizeUnansweredBranchesAsync(UserTask task, CancellationToken ct)
     {

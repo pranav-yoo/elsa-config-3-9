@@ -1,0 +1,90 @@
+@use '../styles/variables' as *;
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 24px;
+  background: #fff;
+  border-bottom: 4px solid $icici-orange;
+  box-shadow: 0 2px 6px rgba($icici-maroon, .12);
+
+  h1 {
+    flex: 1;
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: $icici-maroon;
+
+    .logo { color: $icici-orange; font-weight: 800; }
+  }
+}
+
+main { max-width: 1100px; margin: 0 auto; padding: 24px; }
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+
+  button {
+    padding: 7px 16px;
+    border: 1px solid $icici-orange;
+    border-radius: 20px;
+    background: #fff;
+    color: $icici-maroon;
+    text-transform: capitalize;
+    cursor: pointer;
+
+    &:hover { background: #fff1e6; }
+    &.active { background: $icici-maroon; border-color: $icici-maroon; color: #fff; }
+  }
+}
+
+.error {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-left: 4px solid $icici-maroon;
+  border-radius: 6px;
+  background: #fdecea;
+  color: $icici-maroon-dark;
+}
+
+.muted { color: $muted; }
+
+details {
+  margin-top: 12px;
+  summary { color: $icici-maroon; cursor: pointer; }
+  pre {
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 300px;
+    overflow: auto;
+    background: #fff;
+    padding: 8px;
+    border: 1px solid $border;
+    border-radius: 6px;
+  }
+}
+
+.filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  color: $muted;
+
+  button {
+    padding: 4px 12px;
+    border: 1px solid $border;
+    border-radius: 14px;
+    background: #fff;
+    color: $text;
+    cursor: pointer;
+
+    &:hover { border-color: $icici-orange; }
+    &.active { background: $icici-orange; border-color: $icici-orange; color: #fff; }
+  }
+}

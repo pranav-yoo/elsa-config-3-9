@@ -1,71 +1,115 @@
-using System.Text.Json;
-using IlWorkflow.Infrastructure.Configuration;
+namespace IlWorkflow.Infrastructure.Workflows;
 
-namespace IlWorkflow.Api.Workflows;
-
-/// <summary>Compiles typed setup into a normal Elsa flowchart. No runtime graph interpreter.</summary>
+/// <summary>
+/// Turns a <see cref="WorkflowSetup"/> into the JSON of a normal Elsa flowchart (activities + connections).
+/// Elsa then runs, saves and resumes that flowchart; this project has no workflow engine of its own.
+///
+/// Example: stage A with buttons APPROVE → B and REJECT → correction becomes
+/// <code>
+///   initialize ──Done──► stage_A ──APPROVE──► stage_B
+///                           └──REJECT──► correction_A ──Resubmit──► stage_A
+/// </code>
+/// </summary>
 public sealed class WorkflowDefinitionBuilder
 {
-    public string Build(WorkflowSetup setup)
+    private const string StartNode = "initialize";
+    private const string ApprovedNode = "approved";
+    private const string RejectedNode = "rejected";
+
+    public string Build(WorkflowSetup setup) => new Graph(setup).Build();
+
+    /// <summary>Collects nodes and connections while walking the stages once.</summary>
+    private sealed class Graph(WorkflowSetup setup)
     {
-        var activities = new List<object>();
-        var connections = new List<object>();
-        // Embed an immutable setup snapshot in the definition. An existing instance must never read
-        // a newer editable database draft when it resumes days later.
-        var snapshot = ConfigurationJson.Write(setup);
-        object Literal(object value, string type = "String") => new { typeName = type, expression = new { type = "Literal", value } };
-        void Link(string source, string port, string target) => connections.Add(new
+        private readonly List<object> _activities = [];
+        private readonly List<object> _connections = [];
+        // One correction node per (stage that sends back, stage to continue at after resubmit).
+        private readonly Dictionary<(string From, string ResumeAt), string> _corrections = [];
+        // The setup is embedded in each review node, so a running ticket never sees a later edit.
+        private readonly string _snapshot = ConfigurationJson.Write(setup);
+
+        public string Build()
         {
-            source = new { activity = source, port }, target = new { activity = target, port = "In" }
-        });
-        object Review(string id, string key, bool correction = false, bool parallel = false) => new
-        {
-            id, type = "Tickets.TicketReview", version = 1, configurationJson = Literal(snapshot),
-            stageKey = Literal(key), correction = Literal(correction, "Boolean"), parallelBranch = Literal(parallel, "Boolean")
-        };
-        activities.Add(new { id = "initialize", type = "Tickets.InitializeTicket", version = 1, configurationJson = Literal(snapshot) });
-        activities.Add(new { id = "approved", type = "Tickets.FinishTicket", version = 1, outcome = Literal(nameof(TicketOutcome.Approved)) });
-        activities.Add(new { id = "rejected", type = "Tickets.FinishTicket", version = 1, outcome = Literal(nameof(TicketOutcome.Rejected)) });
-        // Correction nodes are explicit graph nodes with a fixed return edge. They are not a second
-        // interpreter or a client-supplied destination. Each rejecting stage gets its own correction node.
-        string Target(Destination destination, string origin)
-        {
-            if (destination.Kind == DestinationKind.Approved) return "approved";
-            if (destination.Kind == DestinationKind.Rejected) return "rejected";
-            if (destination.Kind == DestinationKind.Stage) return "stage_" + destination.StageKey;
-            var correctionId = "correction_" + origin;
-            activities.Add(Review(correctionId, origin, correction: true));
-            Link(correctionId, nameof(TaskDecision.Resubmit), "stage_" + destination.StageKey);
-            return correctionId;
-        }
-        Link("initialize", "Done", "stage_" + setup.StartStage);
-        var parallelMembers = setup.Stages.SelectMany(stage => stage.ParallelWith ?? []).ToHashSet(StringComparer.Ordinal);
-        foreach (var stage in setup.Stages.Where(stage => !parallelMembers.Contains(stage.Key)))
-        {
-            var id = "stage_" + stage.Key;
-            if (stage.ParallelWith is { } members)
-                activities.Add(new { id, type = "Tickets.ParallelTicketReview", version = 1, stageKey = Literal(stage.Key),
-                    branches = members.Prepend(stage.Key).Select(key => Review($"parallel-branch-{stage.Key}-{key}", key, parallel: true)).ToArray() });
-            else
-                activities.Add(Review(id, stage.Key));
-            Link(id, nameof(TaskDecision.Reject), Target(stage.RejectTo, stage.Key));
-            var rules = stage.ApproveRules ?? [];
-            Link(id, nameof(TaskDecision.Approve), rules.Length == 0 ? Target(stage.ApproveTo, stage.Key) : "rule_" + stage.Key + "_0");
-            for (var i = 0; i < rules.Length; i++)
+            _activities.Add(new { id = StartNode, type = "Tickets.InitializeTicket", version = 1 });
+            _activities.Add(Finish(ApprovedNode, TicketOutcome.Approved));
+            _activities.Add(Finish(RejectedNode, TicketOutcome.Rejected));
+            Connect(StartNode, "Done", StageNode(setup.StartStage));
+
+            var parallelMembers = setup.Stages.SelectMany(stage => stage.ParallelWith ?? []).ToHashSet();
+            foreach (var stage in setup.Stages.Where(stage => !parallelMembers.Contains(stage.Key)))
             {
-                var ruleId = "rule_" + stage.Key + "_" + i;
-                // Read the persisted result of the shared typed comparison. JavaScript must not
-                // round decimal/Int64 values or treat an omitted field as an inherited object property.
-                var ruleKey = JsonSerializer.Serialize(stage.Key + "_" + i);
-                activities.Add(new { id = ruleId, type = "Elsa.FlowDecision", version = 1,
-                    condition = new { typeName = "Boolean", expression = new { type = "JavaScript",
-                        value = $"JSON.parse(getVariable('attributesJson'))['$routes'][{ruleKey}] === true" } } });
-                Link(ruleId, "True", Target(rules[i].Destination, stage.Key));
-                Link(ruleId, "False", i + 1 < rules.Length ? "rule_" + stage.Key + "_" + (i + 1) : Target(stage.ApproveTo, stage.Key));
+                if (stage.IsParallelGroup) AddParallelGroup(stage);
+                else AddStage(stage);
             }
+
+            return ConfigurationJson.Write(new
+            {
+                id = "ticket_graph", type = "Elsa.Flowchart", version = 1, start = StartNode,
+                activities = _activities, connections = _connections
+            });
         }
-        return ConfigurationJson.Write(new { id = "ticket_graph", type = "Elsa.Flowchart", version = 1, start = "initialize",
-            activities, connections, variables = new[] { new { id = "attributesJson", name = "attributesJson", typeName = "String",
-                storageDriverTypeName = "Elsa.Workflows.WorkflowInstanceStorageDriver, Elsa.Workflows.Core" } } });
+
+        /// <summary>A review node with one outgoing connection per button, named after the button key.</summary>
+        private void AddStage(StageDefinition stage)
+        {
+            _activities.Add(Review(StageNode(stage.Key), stage.Key));
+            foreach (var action in stage.Actions!)
+                Connect(StageNode(stage.Key), action.Key, Target(action.Destination, stage.Key));
+        }
+
+        /// <summary>All stages of the group open at once; the group leaves through Approve or Reject.</summary>
+        private void AddParallelGroup(StageDefinition entry)
+        {
+            var branchKeys = entry.ParallelWith!.Prepend(entry.Key);
+            _activities.Add(new
+            {
+                id = StageNode(entry.Key), type = "Tickets.ParallelTicketReview", version = 1, stageKey = Literal(entry.Key),
+                branches = branchKeys.Select(key => Review($"parallel-branch-{entry.Key}-{key}", key, parallel: true)).ToArray()
+            });
+            var approve = entry.Actions!.Single(action => action.Key == TaskActionKeys.Approve);
+            var reject = entry.Actions!.Single(action => action.Key == TaskActionKeys.Reject);
+            Connect(StageNode(entry.Key), StagePorts.Approve, Target(approve.Destination, entry.Key));
+            Connect(StageNode(entry.Key), StagePorts.Reject, Target(reject.Destination, entry.Key));
+        }
+
+        /// <summary>The node a destination points to. Correction nodes are created on first use.</summary>
+        private string Target(Destination destination, string fromStage) => destination.Kind switch
+        {
+            DestinationKind.Approved => ApprovedNode,
+            DestinationKind.Rejected => RejectedNode,
+            DestinationKind.Stage => StageNode(destination.StageKey!),
+            DestinationKind.Correction => CorrectionNode(fromStage, destination.StageKey!),
+            _ => throw new ArgumentOutOfRangeException(nameof(destination))
+        };
+
+        private string CorrectionNode(string fromStage, string resumeAt)
+        {
+            if (_corrections.TryGetValue((fromStage, resumeAt), out var existing)) return existing;
+
+            var id = $"correction_{fromStage}_{resumeAt}";
+            _corrections[(fromStage, resumeAt)] = id;
+            _activities.Add(Review(id, fromStage, correction: true));
+            Connect(id, StagePorts.Resubmit, StageNode(resumeAt));
+            return id;
+        }
+
+        private object Review(string id, string stageKey, bool correction = false, bool parallel = false) => new
+        {
+            id, type = "Tickets.TicketReview", version = 1,
+            configurationJson = Literal(_snapshot), stageKey = Literal(stageKey),
+            correction = Literal(correction, "Boolean"), parallelBranch = Literal(parallel, "Boolean")
+        };
+
+        private static object Finish(string id, TicketOutcome outcome) =>
+            new { id, type = "Tickets.FinishTicket", version = 1, outcome = Literal(outcome.ToString()) };
+
+        private void Connect(string from, string port, string to) =>
+            _connections.Add(new { source = new { activity = from, port }, target = new { activity = to, port = "In" } });
+
+        private static string StageNode(string stageKey) => "stage_" + stageKey;
+
+        /// <summary>A constant activity input in Elsa's JSON format.</summary>
+        private static object Literal(object value, string type = "String") =>
+            new { typeName = type, expression = new { type = "Literal", value } };
     }
 }

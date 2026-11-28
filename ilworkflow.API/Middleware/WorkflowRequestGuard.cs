@@ -3,220 +3,217 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Elsa.Common.Models;
-using Elsa.UserTasks.Contracts;
-using Elsa.UserTasks.Models;
 using Elsa.Workflows.Management;
 using Elsa.Workflows.Management.Filters;
 using FluentValidation;
-using IlWorkflow.Infrastructure.Configuration;
 using IlWorkflow.Infrastructure.Persistence;
-using IlWorkflow.Api.Workflows;
+using IlWorkflow.Infrastructure.Tasks;
+using IlWorkflow.Infrastructure.Workflows;
 using Microsoft.EntityFrameworkCore;
 
 namespace IlWorkflow.API.Middleware;
 
-/// <summary>Attaches business validation and visibility to existing Elsa routes, not replacement ticket APIs.</summary>
-public sealed class WorkflowRequestGuard
+/// <summary>
+/// Runs before Elsa's built-in endpoints (/elsa/api/*) and adds this application's rules to them.
+/// It adds no endpoints of its own. In short:
+/// <list type="bullet">
+/// <item>identity: local login/users, Development only.</item>
+/// <item>workflow-definitions/{id}/execute: validate the ticket and set the requester from the token.</item>
+/// <item>workflow-instances: ordinary users may read only instances they take part in.</item>
+/// <item>user-tasks: native task API, plus the extra "observed" and "supervised" list scopes.</item>
+/// <item>everything else (definitions admin, etc.): supervisors only.</item>
+/// </list>
+/// Errors are thrown as exceptions and turned into responses by <see cref="ExceptionHandlingMiddleware"/>.
+/// </summary>
+public sealed class WorkflowRequestGuard(RequestDelegate next, IConfiguration configuration, IHostEnvironment environment)
 {
-    private readonly RequestDelegate _next;
-    private readonly bool _preview;
+    private const string ElsaApiPath = "/elsa/api/";
+    private const int MaxBodyBytes = 1024 * 1024;
+    private readonly bool _development = environment.IsDevelopment();
+    private readonly bool _preview = environment.IsDevelopment() && configuration.GetValue<bool>("SwaggerPreview");
 
-    // Middleware receives the next pipeline step; it does not introduce new HTTP routes.
-    public WorkflowRequestGuard(RequestDelegate next, IConfiguration configuration, IHostEnvironment environment)
+    public async Task InvokeAsync(HttpContext http, ApplicationDbContext db, IWorkflowDefinitionStore definitions,
+        WorkflowAccessService access, TaskService tasks)
     {
-        _next = next;
-        _preview = environment.IsDevelopment() && configuration.GetValue<bool>("SwaggerPreview");
-    }
-    public async Task InvokeAsync(HttpContext http, ApplicationDbContext db, IWorkflowDefinitionStore definitions, WorkflowAccessService access)
-    {
+        var path = http.Request.Path.Value ?? "";
+        var isAppApi = path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase);
+        var isElsaApi = path.StartsWith(ElsaApiPath, StringComparison.OrdinalIgnoreCase);
+
+        if (_preview) RejectWritesInPreview(http, path, isAppApi, isElsaApi);
+        if (isAppApi) RejectTenant(http);
+        if (!isElsaApi)
+        {
+            await next(http);
+            return;
+        }
+
+        // ASP.NET routing ignores case, so compare lower-case names; otherwise "/USER-TASKS" could skip a check.
+        // Only the resource (parts[0]) and action (parts[2]) are lower-cased: IDs in parts[1] keep their case.
+        var parts = path[ElsaApiPath.Length..].Trim('/').Split('/');
+        parts[0] = parts[0].ToLowerInvariant();
+        if (parts.Length > 2) parts[2] = parts[2].ToLowerInvariant();
+        var resource = parts[0];
         var originalBody = http.Request.Body;
         try
         {
-            var path = http.Request.Path.Value ?? "";
-            // A preview must never mix application PostgreSQL writes with Elsa's temporary memory stores.
-            // Local login remains available for browsing authorized documentation; business operations do not.
-            if (_preview && ((path.StartsWith("/api/workflow-configurations", StringComparison.OrdinalIgnoreCase) || path.StartsWith("/api/workflow-attributes", StringComparison.OrdinalIgnoreCase))
-                || path.StartsWith("/elsa/api/", StringComparison.OrdinalIgnoreCase)
-                    && !HttpMethods.IsGet(http.Request.Method) && !HttpMethods.IsHead(http.Request.Method)
-                    && !path.TrimEnd('/').Equals("/elsa/api/identity/login", StringComparison.OrdinalIgnoreCase)))
-                throw new ApiException(503, "Swagger preview is documentation-only. Set SwaggerPreview=false and configure PostgreSQL for workflow operations.");
-            if ((path.StartsWith("/api/workflow-configurations", StringComparison.OrdinalIgnoreCase) || path.StartsWith("/api/workflow-attributes", StringComparison.OrdinalIgnoreCase)))
+            switch (resource)
             {
-                if (!string.IsNullOrEmpty(http.User.FindFirstValue("tenant"))) throw new ApiException(403, "This version supports the default organization only.");
-                await _next(http); return;
+                case "identity":
+                    if (!_development) throw new ApiException(404, "Not found.");
+                    break;
+                case "workflow-definitions" when parts is [_, _, "execute"]:
+                    var supervisor = RequireUser(http);
+                    await PrepareExecuteAsync(http, parts[1], db, definitions, supervisor);
+                    break;
+                case "workflow-instances":
+                    if (!RequireUser(http)) await EnsureCanReadInstanceAsync(http, parts, access);
+                    break;
+                case "user-tasks":
+                    RequireUser(http);
+                    if (await TryListExtraScopesAsync(http, parts, tasks)) return;
+                    break;
+                default:
+                    var canAdminister = RequireUser(http);
+                    var isDefinitionRead = resource == "workflow-definitions" && HttpMethods.IsGet(http.Request.Method);
+                    if (!canAdminister && !isDefinitionRead)
+                        throw new ApiException(403, "This engine operation is restricted. Use the task endpoints or POST execute.");
+                    break;
             }
-            if (!path.StartsWith("/elsa/api/", StringComparison.OrdinalIgnoreCase)) { await _next(http); return; }
-            var parts = path[10..].Trim('/').Split('/');
-            // ASP.NET routes are case-insensitive. Normalize resource/action names too, or differently
-            // cased URLs could reach the native endpoint without running the corresponding guard.
-            parts[0] = parts[0].ToLowerInvariant();
-            if (parts.Length > 2) parts[2] = parts[2].ToLowerInvariant();
-            if (parts[0].Equals("identity", StringComparison.OrdinalIgnoreCase)) { await _next(http); return; }
-            if (http.User.Identity?.IsAuthenticated != true) throw new ApiException(401, "A valid bearer token is required.");
-            if (!string.IsNullOrEmpty(http.User.FindFirstValue("tenant"))) throw new ApiException(403, "This version supports the default organization only.");
-            var supervisor = ConfigurationAccess.IsSupervisor(http.User);
-            if (parts.Length == 1 && parts[0] == "user-tasks" && HttpMethods.IsGet(http.Request.Method)
-                && string.Equals(http.Request.Query["scope"], "observed", StringComparison.OrdinalIgnoreCase))
-            {
-                await ListObservedTasksAsync(http);
-                return;
-            }
-            // Elsa 3.9 keyword search includes Tags.Any(). Its PostgreSQL migration stores tags as
-            // text JSON; the compatibility converter cannot translate that collection predicate.
-            // Scope/status/instance/reference filters remain native and fully supported.
-            if (parts[0] == "user-tasks" && parts.Length == 1 && !string.IsNullOrWhiteSpace(http.Request.Query["search"]))
-                throw new ApiException(400, "Keyword task search is unavailable with the Elsa 3.9 PostgreSQL provider. Use scope, status or workflow filters.");
-            if (parts[0] == "workflow-definitions" && parts.Length == 3 && parts[2] == "execute")
-            {
-                if (!HttpMethods.IsPost(http.Request.Method)) throw new ApiException(400, "Use POST execute with a JSON input object.");
-                if (!ConfigurationAccess.HasPermission(http.User, "workflows/definitions", "execute")) throw new ApiException(403, "Workflow execute permission is required.");
-                var definition = await definitions.FindAsync(new WorkflowDefinitionFilter { DefinitionId = parts[1], VersionOptions = VersionOptions.Published }, http.RequestAborted);
-                if (definition is null) throw new ApiException(404, "Published definition not found.");
-                var row = await db.WorkflowConfigurations.AsNoTracking().SingleOrDefaultAsync(x => x.DefinitionVersionId == definition.Id, http.RequestAborted);
-                if (row is null)
-                {
-                    // Legacy research workflows are deliberately administrator-only through this new entry boundary.
-                    if (!supervisor) throw new ApiException(403, "Only configured published workflows can be submitted by ordinary users.");
-                    await _next(http); return;
-                }
-                if (!row.Ready || !row.Frozen || WorkflowConfigurationService.Hash(definition.StringData ?? "") != row.DefinitionHash)
-                    throw new ApiException(409, "Workflow publication/configuration is incomplete or changed outside its configuration API.");
-                // Validate and rewrite the request BEFORE Elsa creates an instance. Invalid submissions
-                // must be HTTP 400, not persisted Faulted instances. This path is synchronous execute only.
-                var body = await ReadObjectAsync(http);
-                if (body.Any(property => property.Key is not ("input" or "correlationId" or "name" or "versionOptions")))
-                    throw new ApiException(400, "Custom variables and alternate activity starts are not permitted for configured tickets.");
-                var input = body["input"] as JsonObject ?? new JsonObject();
-                var requester = http.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? http.User.FindFirstValue("sub");
-                if (string.IsNullOrWhiteSpace(requester)) throw new ApiException(403, "A stable authenticated user ID is required.");
-                if (input["requesterId"] is { } supplied && supplied.ToString() != requester) throw new ApiException(403, "Requester impersonation is not permitted.");
-                var setup = ConfigurationJson.Read<WorkflowSetup>(row.ConfigurationJson);
-                var values = input["attributes"] is JsonObject attributeObject
-                    ? attributeObject.Deserialize<Dictionary<string, JsonElement>>()! : new Dictionary<string, JsonElement>();
-                if (input.Any(x => x.Key != "attributes" && x.Key != "requesterId")) throw new ApiException(400, "Supply ticket fields inside input.attributes.");
-                await new TicketInputValidator(setup).ValidateAndThrowAsync(values, http.RequestAborted);
-                var normalizedInput = new JsonObject { ["requesterId"] = requester, ["attributes"] = JsonSerializer.SerializeToNode(values) };
-                foreach (var field in definition.Inputs.Where(field => field.Name is not ("attributes" or "requesterId")))
-                    if (values.TryGetValue(field.Name, out var value)) normalizedInput[field.Name] = JsonNode.Parse(value.GetRawText());
-                body["input"] = normalizedInput;
-                // Replacing client version selection prevents executing a draft or racing a later publication.
-                body["versionOptions"] = JsonSerializer.SerializeToNode(VersionOptions.SpecificVersion(row.DefinitionVersion));
-                var bytes = Encoding.UTF8.GetBytes(body.ToJsonString());
-                http.Request.Body = new MemoryStream(bytes);
-                http.Request.ContentLength = bytes.Length;
-                http.Request.ContentType = "application/json";
-            }
-            else if (parts[0] == "workflow-instances")
-            {
-                if (!supervisor)
-                {
-                    var read = parts.Length == 2 && HttpMethods.IsGet(http.Request.Method)
-                        || parts.Length == 3 && parts[2] == "journal" && (HttpMethods.IsGet(http.Request.Method) || HttpMethods.IsPost(http.Request.Method));
-                    if (!read) throw new ApiException(403, "Broad instance queries and administration are restricted to supervisors.");
-                    if (!await access.CanReadInstanceAsync(parts[1], http.User, http.RequestAborted)) throw new ApiException(404, "Workflow instance not found.");
-                }
-            }
-            else if (parts[0] != "user-tasks")
-            {
-                if (!supervisor && (parts[0] != "workflow-definitions" || !HttpMethods.IsGet(http.Request.Method)))
-                    throw new ApiException(403, "This engine operation is restricted. Use native task operations or POST execute.");
-            }
-            if (parts[0] == "user-tasks" && parts.Length >= 3
-                && !HttpMethods.IsGet(http.Request.Method) && !HttpMethods.IsHead(http.Request.Method)
+
+            // Task commands on parallel review tasks are run one at a time per workflow instance.
+            if (resource == "user-tasks" && parts.Length >= 3 && !IsRead(http)
                 && http.RequestServices.GetService<ParallelTaskCommands>() is { } parallel)
             {
-                await parallel.RunCommandAsync(parts[1], parts[2] == "complete", http.User, () => _next(http), http.RequestAborted);
+                await parallel.RunCommandAsync(parts[1], parts[2] == "complete", http.User, () => next(http), http.RequestAborted);
                 return;
             }
-            await _next(http);
-        }
-        catch (ValidationException exception)
-        {
-            http.Response.StatusCode = 400;
-            await http.Response.WriteAsJsonAsync(new { code = "validation_failed", errors = exception.Errors.Select(x => new { field = x.PropertyName, message = x.ErrorMessage }) });
-        }
-        catch (ApiException exception)
-        {
-            http.Response.StatusCode = exception.Status;
-            await http.Response.WriteAsJsonAsync(new { code = "request_rejected", message = exception.Message });
-        }
-        catch (DbUpdateException exception) when (exception.InnerException is Npgsql.PostgresException
-            { SqlState: Npgsql.PostgresErrorCodes.UniqueViolation })
-        {
-            // Two simultaneous task commands can both pass the initial operation lookup. The native
-            // store's unique index remains authoritative; expose its race as a conflict, not HTTP 500.
-            http.Response.StatusCode = 409;
-            await http.Response.WriteAsJsonAsync(new { code = "operation_conflict", message = "A competing operation was already recorded. Reload the task before deciding whether to retry." });
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            http.Response.StatusCode = 409;
-            await http.Response.WriteAsJsonAsync(new { code = "revision_conflict", message = "Read the current revision and retry the intended change." });
-        }
-        catch (BadHttpRequestException exception)
-        {
-            http.Response.StatusCode = exception.StatusCode;
-            await http.Response.WriteAsJsonAsync(new { code = "invalid_request", message = "Check request size and content type." });
-        }
-        catch (JsonException)
-        {
-            http.Response.StatusCode = 400;
-            await http.Response.WriteAsJsonAsync(new { code = "invalid_json", message = "Check JSON types, enum names and required objects." });
+            await next(http);
         }
         finally
         {
+            // PrepareExecuteAsync may replace the body with a rewritten copy; restore the original stream.
             if (http.Request.Body != originalBody) await http.Request.Body.DisposeAsync();
             http.Request.Body = originalBody;
         }
     }
-    private static async Task ListObservedTasksAsync(HttpContext http)
-    {
-        // Elsa's query scope enum is fixed. Handle only this additional read scope and leave
-        // native list, detail, events and all task mutations on their existing endpoints.
-        var services = http.RequestServices;
-        var observed = services.GetService<ObservedUserTasks>()
-            ?? throw new ApiException(503, "Observed task lists require PostgreSQL.");
-        var ct = http.RequestAborted;
-        var actor = await services.GetRequiredService<IUserTaskIdentityResolver>().ResolveAsync(http.User, ct)
-            ?? throw new ApiException(403, "Task view permission is required.");
-        if (!ObservedTaskAccess.CanObserve(actor)) throw new ApiException(403, "Task view permission is required.");
 
-        var query = http.Request.Query;
-        if (query.Keys.Any(key => !ObservedQueryParameters.Contains(key)))
-            throw new ApiException(400, "Observed scope supports workflowInstanceId, status, cursor, limit and includeTotalCount.");
-        if (query.Any(filter => filter.Value.Count != 1)) throw new ApiException(400, "Supply each observed task filter once.");
-        var limit = 50;
-        if (query.TryGetValue("limit", out var rawLimit) && (!int.TryParse(rawLimit, out limit) || limit is < 1 or > 50))
-            throw new ApiException(400, "Observed task limit must be between 1 and 50.");
-        UserTaskStatus? status = null;
-        if (query.TryGetValue("status", out var rawStatus))
+    /// <summary>Checks the caller is signed in to the default organization. Returns true for supervisors.</summary>
+    private static bool RequireUser(HttpContext http)
+    {
+        if (http.User.Identity?.IsAuthenticated != true) throw new ApiException(401, "A valid bearer token is required.");
+        RejectTenant(http);
+        return PermissionChecks.IsSupervisor(http.User);
+    }
+
+    private static void RejectTenant(HttpContext http)
+    {
+        if (!string.IsNullOrEmpty(http.User.FindFirstValue("tenant")))
+            throw new ApiException(403, "This version supports the default organization only.");
+    }
+
+    /// <summary>Swagger preview keeps Elsa in memory; block every write so nothing mixes with PostgreSQL.</summary>
+    private static void RejectWritesInPreview(HttpContext http, string path, bool isAppApi, bool isElsaApi)
+    {
+        var isLogin = path.TrimEnd('/').Equals("/elsa/api/identity/login", StringComparison.OrdinalIgnoreCase);
+        if (isAppApi && path.StartsWith("/api/workflow-configurations", StringComparison.OrdinalIgnoreCase) || isElsaApi && !IsRead(http) && !isLogin)
+            throw new ApiException(503, "Swagger preview is documentation-only. Set SwaggerPreview=false and configure PostgreSQL.");
+    }
+
+    private static bool IsRead(HttpContext http) => HttpMethods.IsGet(http.Request.Method) || HttpMethods.IsHead(http.Request.Method);
+
+    /// <summary>
+    /// Validates POST execute and rewrites its body BEFORE Elsa creates an instance:
+    /// the requester comes from the token and the exact published version is pinned.
+    /// </summary>
+    private static async Task PrepareExecuteAsync(HttpContext http, string definitionId, ApplicationDbContext db,
+        IWorkflowDefinitionStore definitions, bool supervisor)
+    {
+        if (!HttpMethods.IsPost(http.Request.Method)) throw new ApiException(400, "Use POST execute with a JSON body.");
+        if (!PermissionChecks.HasPermission(http.User, "workflows/definitions", "execute")) throw new ApiException(403, "Workflow execute permission is required.");
+
+        var definition = await definitions.FindAsync(new WorkflowDefinitionFilter { DefinitionId = definitionId, VersionOptions = VersionOptions.Published }, http.RequestAborted)
+            ?? throw new ApiException(404, "Published definition not found.");
+        var row = await db.WorkflowConfigurations.AsNoTracking().SingleOrDefaultAsync(x => x.DefinitionVersionId == definition.Id, http.RequestAborted);
+        if (row is null)
         {
-            if (!Enum.GetNames<UserTaskStatus>().Contains(rawStatus.ToString(), StringComparer.OrdinalIgnoreCase)
-                || !Enum.TryParse<UserTaskStatus>(rawStatus, true, out var parsed))
-                throw new ApiException(400, "Unknown task status.");
-            status = parsed;
+            // A definition not created through /api/workflow-configurations: supervisors may run it unchanged.
+            if (!supervisor) throw new ApiException(403, "Only configured published workflows can be submitted.");
+            return;
         }
+        if (!row.Ready || !row.Frozen || WorkflowConfigurationService.Hash(definition.StringData) != row.DefinitionHash)
+            throw new ApiException(409, "This workflow version is not fully published or was changed outside the configuration API.");
+
+        var body = await ReadJsonObjectAsync(http);
+        await new ExecuteRequestValidator().ValidateAndThrowAsync(body, http.RequestAborted);
+
+        var requester = http.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? http.User.FindFirstValue("sub");
+        if (string.IsNullOrWhiteSpace(requester)) throw new ApiException(403, "A stable authenticated user ID is required.");
+        var input = body["input"] as JsonObject ?? [];
+        if (input[TicketState.Requester] is { } supplied && supplied.ToString() != requester)
+            throw new ApiException(403, "You cannot submit a ticket on behalf of someone else.");
+
+        body["input"] = new JsonObject
+        {
+            [TicketState.Requester] = requester,
+            [TicketState.Attributes] = input[TicketState.Attributes]?.DeepClone() ?? new JsonObject()
+        };
+        // Always run the version this row belongs to: never a draft, never a newer version published meanwhile.
+        body["versionOptions"] = JsonSerializer.SerializeToNode(VersionOptions.SpecificVersion(row.DefinitionVersion));
+
+        var bytes = Encoding.UTF8.GetBytes(body.ToJsonString());
+        http.Request.Body = new MemoryStream(bytes);
+        http.Request.ContentLength = bytes.Length;
+        http.Request.ContentType = "application/json";
+    }
+
+    /// <summary>Ordinary users may read one instance (and its journal) only when they take part in it.</summary>
+    private static async Task EnsureCanReadInstanceAsync(HttpContext http, string[] parts, WorkflowAccessService access)
+    {
+        var method = http.Request.Method;
+        var isSingleRead = parts.Length == 2 && HttpMethods.IsGet(method);
+        var isJournalRead = parts is [_, _, "journal"] && (HttpMethods.IsGet(method) || HttpMethods.IsPost(method));
+        if (!isSingleRead && !isJournalRead) throw new ApiException(403, "Instance queries and administration are restricted to supervisors.");
+        if (!await access.CanReadInstanceAsync(parts[1], http.User, http.RequestAborted)) throw new ApiException(404, "Workflow instance not found.");
+    }
+
+    /// <summary>
+    /// GET /elsa/api/user-tasks?scope=observed|supervised. Elsa's own scopes cannot express these,
+    /// so they are answered here by <see cref="TaskService"/> (the same code behind /api/tasks).
+    /// </summary>
+    private static async Task<bool> TryListExtraScopesAsync(HttpContext http, string[] parts, TaskService tasks)
+    {
+        if (parts.Length != 1 || !HttpMethods.IsGet(http.Request.Method)) return false;
+        var query = http.Request.Query;
+
+        // Elsa 3.9's keyword search cannot be translated to SQL by its PostgreSQL provider.
+        if (!string.IsNullOrWhiteSpace(query["search"]))
+            throw new ApiException(400, "Keyword task search is unavailable with PostgreSQL. Use scope, status or workflow filters.");
+
+        var scope = query["scope"].ToString();
+        if (!scope.Equals("observed", StringComparison.OrdinalIgnoreCase) && !scope.Equals("supervised", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var limit = 50;
+        if (query.TryGetValue("limit", out var rawLimit) && !int.TryParse(rawLimit, out limit)) throw new ApiException(400, "limit must be a number.");
         var includeTotalCount = false;
         if (query.TryGetValue("includeTotalCount", out var rawTotal) && !bool.TryParse(rawTotal, out includeTotalCount))
             throw new ApiException(400, "includeTotalCount must be true or false.");
-        var result = await observed.QueryAsync(actor, query["workflowInstanceId"], status, query["cursor"], limit, includeTotalCount, ct);
-        await http.Response.WriteAsJsonAsync(result, ct);
+
+        var request = new ListTasksRequest(scope, query["status"], query["workflowInstanceId"], query["cursor"], limit, includeTotalCount);
+        await http.Response.WriteAsJsonAsync(await tasks.ListAsync(http.User, request, http.RequestAborted), http.RequestAborted);
+        return true;
     }
 
-    private static readonly HashSet<string> ObservedQueryParameters = new(StringComparer.OrdinalIgnoreCase)
-        { "scope", "workflowInstanceId", "status", "cursor", "limit", "includeTotalCount" };
-
-    private static async Task<JsonObject> ReadObjectAsync(HttpContext http)
+    private static async Task<JsonObject> ReadJsonObjectAsync(HttpContext http)
     {
-        if (http.Request.ContentLength > 1024 * 1024) throw new ApiException(413, "Request is too large.");
-        // Also cap chunked requests, where ContentLength is absent. Kestrel enforces this while reading.
+        if (http.Request.ContentLength > MaxBodyBytes) throw new ApiException(413, "Request is too large.");
+        // Also limit chunked requests, which have no Content-Length.
         var limit = http.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>();
-        if (limit is { IsReadOnly: false }) limit.MaxRequestBodySize = 1024 * 1024;
-        // The original stream is restored after native execution; downstream reads the normalized replacement.
-        // Reject duplicate keys at parsing time. Otherwise JsonObject's lazy dictionary can throw
-        // ArgumentException later, turning malformed client input into an HTTP 500.
-        return await JsonNode.ParseAsync(http.Request.Body, documentOptions: new JsonDocumentOptions { AllowDuplicateProperties = false },
-            cancellationToken: http.RequestAborted) as JsonObject
+        if (limit is { IsReadOnly: false }) limit.MaxRequestBodySize = MaxBodyBytes;
+
+        // Reject duplicate keys now; otherwise JsonObject could throw later and cause a 500.
+        var options = new JsonDocumentOptions { AllowDuplicateProperties = false };
+        return await JsonNode.ParseAsync(http.Request.Body, documentOptions: options, cancellationToken: http.RequestAborted) as JsonObject
             ?? throw new ApiException(400, "Supply a JSON object.");
     }
 }
